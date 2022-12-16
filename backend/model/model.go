@@ -1273,31 +1273,6 @@ func MigrateDB(DB *gorm.DB) (bool, error) {
 		return false, e.Wrap(err, "Error dropping null constraint on error_fingerprints.error_group_id")
 	}
 
-	if err := DB.Exec(`
-		CREATE MATERIALIZED VIEW IF NOT EXISTS daily_session_counts_view AS
-			SELECT project_id, DATE_TRUNC('day', created_at, 'UTC') as date, COUNT(*) as count
-			FROM sessions
-			WHERE excluded <> true
-			AND (active_length >= 1000 OR (active_length is null and length >= 1000))
-			AND processed = true
-			GROUP BY 1, 2;
-	`).Error; err != nil {
-		return false, e.Wrap(err, "Error creating daily_session_counts_view")
-	}
-
-	if err := DB.Exec(`
-		DO $$
-		BEGIN
-			IF NOT EXISTS
-				(select * from pg_indexes where indexname = 'idx_daily_session_counts_view_project_id_date')
-			THEN
-				CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_session_counts_view_project_id_date ON daily_session_counts_view (project_id, date);
-			END IF;
-		END $$;
-	`).Error; err != nil {
-		return false, e.Wrap(err, "Error creating idx_daily_session_counts_view_project_id_date")
-	}
-
 	// Create unique conditional index for billing email history
 	if err := DB.Exec(`
 		DO $$

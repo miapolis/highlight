@@ -172,18 +172,6 @@ type ComplexityRoot struct {
 		UpdatedAt func(childComplexity int) int
 	}
 
-	DailyErrorCount struct {
-		Count     func(childComplexity int) int
-		Date      func(childComplexity int) int
-		ProjectID func(childComplexity int) int
-	}
-
-	DailySessionCount struct {
-		Count     func(childComplexity int) int
-		Date      func(childComplexity int) int
-		ProjectID func(childComplexity int) int
-	}
-
 	Dashboard struct {
 		ID                func(childComplexity int) int
 		LastAdminToEditID func(childComplexity int) int
@@ -646,8 +634,6 @@ type ComplexityRoot struct {
 		ClickupTeams                 func(childComplexity int, workspaceID int) int
 		CustomerPortalURL            func(childComplexity int, workspaceID int) int
 		DailyErrorFrequency          func(childComplexity int, projectID int, errorGroupSecureID string, dateOffset int) int
-		DailyErrorsCount             func(childComplexity int, projectID int, dateRange model.DateRangeInput) int
-		DailySessionsCount           func(childComplexity int, projectID int, dateRange model.DateRangeInput) int
 		DashboardDefinitions         func(childComplexity int, projectID int) int
 		DiscordChannelSuggestions    func(childComplexity int, projectID int) int
 		EmailOptOuts                 func(childComplexity int, token *string, adminID *int) int
@@ -1206,8 +1192,6 @@ type QueryResolver interface {
 	LiveUsersCount(ctx context.Context, projectID int) (*int64, error)
 	AdminHasCreatedComment(ctx context.Context, adminID int) (*bool, error)
 	ProjectHasViewedASession(ctx context.Context, projectID int) (*model1.Session, error)
-	DailySessionsCount(ctx context.Context, projectID int, dateRange model.DateRangeInput) ([]*model1.DailySessionCount, error)
-	DailyErrorsCount(ctx context.Context, projectID int, dateRange model.DateRangeInput) ([]*model1.DailyErrorCount, error)
 	DailyErrorFrequency(ctx context.Context, projectID int, errorGroupSecureID string, dateOffset int) ([]int64, error)
 	ErrorDistribution(ctx context.Context, projectID int, errorGroupSecureID string, property string) ([]*model.ErrorDistributionItem, error)
 	ErrorGroupFrequencies(ctx context.Context, projectID int, errorGroupSecureIds []string, params model.ErrorGroupFrequenciesParamsInput, metric *string) ([]*model.ErrorDistributionItem, error)
@@ -1801,48 +1785,6 @@ func (e *executableSchema) Complexity(typeName, field string, childComplexity in
 		}
 
 		return e.complexity.CommentReply.UpdatedAt(childComplexity), true
-
-	case "DailyErrorCount.count":
-		if e.complexity.DailyErrorCount.Count == nil {
-			break
-		}
-
-		return e.complexity.DailyErrorCount.Count(childComplexity), true
-
-	case "DailyErrorCount.date":
-		if e.complexity.DailyErrorCount.Date == nil {
-			break
-		}
-
-		return e.complexity.DailyErrorCount.Date(childComplexity), true
-
-	case "DailyErrorCount.project_id":
-		if e.complexity.DailyErrorCount.ProjectID == nil {
-			break
-		}
-
-		return e.complexity.DailyErrorCount.ProjectID(childComplexity), true
-
-	case "DailySessionCount.count":
-		if e.complexity.DailySessionCount.Count == nil {
-			break
-		}
-
-		return e.complexity.DailySessionCount.Count(childComplexity), true
-
-	case "DailySessionCount.date":
-		if e.complexity.DailySessionCount.Date == nil {
-			break
-		}
-
-		return e.complexity.DailySessionCount.Date(childComplexity), true
-
-	case "DailySessionCount.project_id":
-		if e.complexity.DailySessionCount.ProjectID == nil {
-			break
-		}
-
-		return e.complexity.DailySessionCount.ProjectID(childComplexity), true
 
 	case "Dashboard.id":
 		if e.complexity.Dashboard.ID == nil {
@@ -4556,30 +4498,6 @@ func (e *executableSchema) Complexity(typeName, field string, childComplexity in
 		}
 
 		return e.complexity.Query.DailyErrorFrequency(childComplexity, args["project_id"].(int), args["error_group_secure_id"].(string), args["date_offset"].(int)), true
-
-	case "Query.dailyErrorsCount":
-		if e.complexity.Query.DailyErrorsCount == nil {
-			break
-		}
-
-		args, err := ec.field_Query_dailyErrorsCount_args(context.TODO(), rawArgs)
-		if err != nil {
-			return 0, false
-		}
-
-		return e.complexity.Query.DailyErrorsCount(childComplexity, args["project_id"].(int), args["date_range"].(model.DateRangeInput)), true
-
-	case "Query.dailySessionsCount":
-		if e.complexity.Query.DailySessionsCount == nil {
-			break
-		}
-
-		args, err := ec.field_Query_dailySessionsCount_args(context.TODO(), rawArgs)
-		if err != nil {
-			return 0, false
-		}
-
-		return e.complexity.Query.DailySessionsCount(childComplexity, args["project_id"].(int), args["date_range"].(model.DateRangeInput)), true
 
 	case "Query.dashboard_definitions":
 		if e.complexity.Query.DashboardDefinitions == nil {
@@ -8149,18 +8067,6 @@ enum SessionLifecycle {
 	Completed
 }
 
-type DailySessionCount {
-	project_id: ID!
-	date: Timestamp!
-	count: Int64!
-}
-
-type DailyErrorCount {
-	project_id: ID!
-	date: Timestamp!
-	count: Int64!
-}
-
 type ErrorDistributionItem {
 	error_group_id: String!
 	date: Timestamp!
@@ -8505,14 +8411,6 @@ type Query {
 	liveUsersCount(project_id: ID!): Int64
 	adminHasCreatedComment(admin_id: ID!): Boolean
 	projectHasViewedASession(project_id: ID!): Session
-	dailySessionsCount(
-		project_id: ID!
-		date_range: DateRangeInput!
-	): [DailySessionCount]!
-	dailyErrorsCount(
-		project_id: ID!
-		date_range: DateRangeInput!
-	): [DailyErrorCount]!
 	dailyErrorFrequency(
 		project_id: ID!
 		error_group_secure_id: String!
@@ -11855,54 +11753,6 @@ func (ec *executionContext) field_Query_dailyErrorFrequency_args(ctx context.Con
 		}
 	}
 	args["date_offset"] = arg2
-	return args, nil
-}
-
-func (ec *executionContext) field_Query_dailyErrorsCount_args(ctx context.Context, rawArgs map[string]interface{}) (map[string]interface{}, error) {
-	var err error
-	args := map[string]interface{}{}
-	var arg0 int
-	if tmp, ok := rawArgs["project_id"]; ok {
-		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("project_id"))
-		arg0, err = ec.unmarshalNID2int(ctx, tmp)
-		if err != nil {
-			return nil, err
-		}
-	}
-	args["project_id"] = arg0
-	var arg1 model.DateRangeInput
-	if tmp, ok := rawArgs["date_range"]; ok {
-		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("date_range"))
-		arg1, err = ec.unmarshalNDateRangeInput2githubᚗcomᚋhighlightᚑrunᚋhighlightᚋbackendᚋprivateᚑgraphᚋgraphᚋmodelᚐDateRangeInput(ctx, tmp)
-		if err != nil {
-			return nil, err
-		}
-	}
-	args["date_range"] = arg1
-	return args, nil
-}
-
-func (ec *executionContext) field_Query_dailySessionsCount_args(ctx context.Context, rawArgs map[string]interface{}) (map[string]interface{}, error) {
-	var err error
-	args := map[string]interface{}{}
-	var arg0 int
-	if tmp, ok := rawArgs["project_id"]; ok {
-		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("project_id"))
-		arg0, err = ec.unmarshalNID2int(ctx, tmp)
-		if err != nil {
-			return nil, err
-		}
-	}
-	args["project_id"] = arg0
-	var arg1 model.DateRangeInput
-	if tmp, ok := rawArgs["date_range"]; ok {
-		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("date_range"))
-		arg1, err = ec.unmarshalNDateRangeInput2githubᚗcomᚋhighlightᚑrunᚋhighlightᚋbackendᚋprivateᚑgraphᚋgraphᚋmodelᚐDateRangeInput(ctx, tmp)
-		if err != nil {
-			return nil, err
-		}
-	}
-	args["date_range"] = arg1
 	return args, nil
 }
 
@@ -16766,270 +16616,6 @@ func (ec *executionContext) fieldContext_CommentReply_text(ctx context.Context, 
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type String does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _DailyErrorCount_project_id(ctx context.Context, field graphql.CollectedField, obj *model1.DailyErrorCount) (ret graphql.Marshaler) {
-	fc, err := ec.fieldContext_DailyErrorCount_project_id(ctx, field)
-	if err != nil {
-		return graphql.Null
-	}
-	ctx = graphql.WithFieldContext(ctx, fc)
-	defer func() {
-		if r := recover(); r != nil {
-			ec.Error(ctx, ec.Recover(ctx, r))
-			ret = graphql.Null
-		}
-	}()
-	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
-		ctx = rctx // use context from middleware stack in children
-		return obj.ProjectID, nil
-	})
-	if err != nil {
-		ec.Error(ctx, err)
-		return graphql.Null
-	}
-	if resTmp == nil {
-		if !graphql.HasFieldError(ctx, fc) {
-			ec.Errorf(ctx, "must not be null")
-		}
-		return graphql.Null
-	}
-	res := resTmp.(int)
-	fc.Result = res
-	return ec.marshalNID2int(ctx, field.Selections, res)
-}
-
-func (ec *executionContext) fieldContext_DailyErrorCount_project_id(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "DailyErrorCount",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type ID does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _DailyErrorCount_date(ctx context.Context, field graphql.CollectedField, obj *model1.DailyErrorCount) (ret graphql.Marshaler) {
-	fc, err := ec.fieldContext_DailyErrorCount_date(ctx, field)
-	if err != nil {
-		return graphql.Null
-	}
-	ctx = graphql.WithFieldContext(ctx, fc)
-	defer func() {
-		if r := recover(); r != nil {
-			ec.Error(ctx, ec.Recover(ctx, r))
-			ret = graphql.Null
-		}
-	}()
-	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
-		ctx = rctx // use context from middleware stack in children
-		return obj.Date, nil
-	})
-	if err != nil {
-		ec.Error(ctx, err)
-		return graphql.Null
-	}
-	if resTmp == nil {
-		if !graphql.HasFieldError(ctx, fc) {
-			ec.Errorf(ctx, "must not be null")
-		}
-		return graphql.Null
-	}
-	res := resTmp.(*time.Time)
-	fc.Result = res
-	return ec.marshalNTimestamp2ᚖtimeᚐTime(ctx, field.Selections, res)
-}
-
-func (ec *executionContext) fieldContext_DailyErrorCount_date(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "DailyErrorCount",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type Timestamp does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _DailyErrorCount_count(ctx context.Context, field graphql.CollectedField, obj *model1.DailyErrorCount) (ret graphql.Marshaler) {
-	fc, err := ec.fieldContext_DailyErrorCount_count(ctx, field)
-	if err != nil {
-		return graphql.Null
-	}
-	ctx = graphql.WithFieldContext(ctx, fc)
-	defer func() {
-		if r := recover(); r != nil {
-			ec.Error(ctx, ec.Recover(ctx, r))
-			ret = graphql.Null
-		}
-	}()
-	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
-		ctx = rctx // use context from middleware stack in children
-		return obj.Count, nil
-	})
-	if err != nil {
-		ec.Error(ctx, err)
-		return graphql.Null
-	}
-	if resTmp == nil {
-		if !graphql.HasFieldError(ctx, fc) {
-			ec.Errorf(ctx, "must not be null")
-		}
-		return graphql.Null
-	}
-	res := resTmp.(int64)
-	fc.Result = res
-	return ec.marshalNInt642int64(ctx, field.Selections, res)
-}
-
-func (ec *executionContext) fieldContext_DailyErrorCount_count(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "DailyErrorCount",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type Int64 does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _DailySessionCount_project_id(ctx context.Context, field graphql.CollectedField, obj *model1.DailySessionCount) (ret graphql.Marshaler) {
-	fc, err := ec.fieldContext_DailySessionCount_project_id(ctx, field)
-	if err != nil {
-		return graphql.Null
-	}
-	ctx = graphql.WithFieldContext(ctx, fc)
-	defer func() {
-		if r := recover(); r != nil {
-			ec.Error(ctx, ec.Recover(ctx, r))
-			ret = graphql.Null
-		}
-	}()
-	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
-		ctx = rctx // use context from middleware stack in children
-		return obj.ProjectID, nil
-	})
-	if err != nil {
-		ec.Error(ctx, err)
-		return graphql.Null
-	}
-	if resTmp == nil {
-		if !graphql.HasFieldError(ctx, fc) {
-			ec.Errorf(ctx, "must not be null")
-		}
-		return graphql.Null
-	}
-	res := resTmp.(int)
-	fc.Result = res
-	return ec.marshalNID2int(ctx, field.Selections, res)
-}
-
-func (ec *executionContext) fieldContext_DailySessionCount_project_id(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "DailySessionCount",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type ID does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _DailySessionCount_date(ctx context.Context, field graphql.CollectedField, obj *model1.DailySessionCount) (ret graphql.Marshaler) {
-	fc, err := ec.fieldContext_DailySessionCount_date(ctx, field)
-	if err != nil {
-		return graphql.Null
-	}
-	ctx = graphql.WithFieldContext(ctx, fc)
-	defer func() {
-		if r := recover(); r != nil {
-			ec.Error(ctx, ec.Recover(ctx, r))
-			ret = graphql.Null
-		}
-	}()
-	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
-		ctx = rctx // use context from middleware stack in children
-		return obj.Date, nil
-	})
-	if err != nil {
-		ec.Error(ctx, err)
-		return graphql.Null
-	}
-	if resTmp == nil {
-		if !graphql.HasFieldError(ctx, fc) {
-			ec.Errorf(ctx, "must not be null")
-		}
-		return graphql.Null
-	}
-	res := resTmp.(*time.Time)
-	fc.Result = res
-	return ec.marshalNTimestamp2ᚖtimeᚐTime(ctx, field.Selections, res)
-}
-
-func (ec *executionContext) fieldContext_DailySessionCount_date(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "DailySessionCount",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type Timestamp does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _DailySessionCount_count(ctx context.Context, field graphql.CollectedField, obj *model1.DailySessionCount) (ret graphql.Marshaler) {
-	fc, err := ec.fieldContext_DailySessionCount_count(ctx, field)
-	if err != nil {
-		return graphql.Null
-	}
-	ctx = graphql.WithFieldContext(ctx, fc)
-	defer func() {
-		if r := recover(); r != nil {
-			ec.Error(ctx, ec.Recover(ctx, r))
-			ret = graphql.Null
-		}
-	}()
-	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
-		ctx = rctx // use context from middleware stack in children
-		return obj.Count, nil
-	})
-	if err != nil {
-		ec.Error(ctx, err)
-		return graphql.Null
-	}
-	if resTmp == nil {
-		if !graphql.HasFieldError(ctx, fc) {
-			ec.Errorf(ctx, "must not be null")
-		}
-		return graphql.Null
-	}
-	res := resTmp.(int64)
-	fc.Result = res
-	return ec.marshalNInt642int64(ctx, field.Selections, res)
-}
-
-func (ec *executionContext) fieldContext_DailySessionCount_count(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "DailySessionCount",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type Int64 does not have child fields")
 		},
 	}
 	return fc, nil
@@ -35076,132 +34662,6 @@ func (ec *executionContext) fieldContext_Query_projectHasViewedASession(ctx cont
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Query_projectHasViewedASession_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
-		ec.Error(ctx, err)
-		return
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _Query_dailySessionsCount(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
-	fc, err := ec.fieldContext_Query_dailySessionsCount(ctx, field)
-	if err != nil {
-		return graphql.Null
-	}
-	ctx = graphql.WithFieldContext(ctx, fc)
-	defer func() {
-		if r := recover(); r != nil {
-			ec.Error(ctx, ec.Recover(ctx, r))
-			ret = graphql.Null
-		}
-	}()
-	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
-		ctx = rctx // use context from middleware stack in children
-		return ec.resolvers.Query().DailySessionsCount(rctx, fc.Args["project_id"].(int), fc.Args["date_range"].(model.DateRangeInput))
-	})
-	if err != nil {
-		ec.Error(ctx, err)
-		return graphql.Null
-	}
-	if resTmp == nil {
-		if !graphql.HasFieldError(ctx, fc) {
-			ec.Errorf(ctx, "must not be null")
-		}
-		return graphql.Null
-	}
-	res := resTmp.([]*model1.DailySessionCount)
-	fc.Result = res
-	return ec.marshalNDailySessionCount2ᚕᚖgithubᚗcomᚋhighlightᚑrunᚋhighlightᚋbackendᚋmodelᚐDailySessionCount(ctx, field.Selections, res)
-}
-
-func (ec *executionContext) fieldContext_Query_dailySessionsCount(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "Query",
-		Field:      field,
-		IsMethod:   true,
-		IsResolver: true,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			switch field.Name {
-			case "project_id":
-				return ec.fieldContext_DailySessionCount_project_id(ctx, field)
-			case "date":
-				return ec.fieldContext_DailySessionCount_date(ctx, field)
-			case "count":
-				return ec.fieldContext_DailySessionCount_count(ctx, field)
-			}
-			return nil, fmt.Errorf("no field named %q was found under type DailySessionCount", field.Name)
-		},
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			err = ec.Recover(ctx, r)
-			ec.Error(ctx, err)
-		}
-	}()
-	ctx = graphql.WithFieldContext(ctx, fc)
-	if fc.Args, err = ec.field_Query_dailySessionsCount_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
-		ec.Error(ctx, err)
-		return
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _Query_dailyErrorsCount(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
-	fc, err := ec.fieldContext_Query_dailyErrorsCount(ctx, field)
-	if err != nil {
-		return graphql.Null
-	}
-	ctx = graphql.WithFieldContext(ctx, fc)
-	defer func() {
-		if r := recover(); r != nil {
-			ec.Error(ctx, ec.Recover(ctx, r))
-			ret = graphql.Null
-		}
-	}()
-	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
-		ctx = rctx // use context from middleware stack in children
-		return ec.resolvers.Query().DailyErrorsCount(rctx, fc.Args["project_id"].(int), fc.Args["date_range"].(model.DateRangeInput))
-	})
-	if err != nil {
-		ec.Error(ctx, err)
-		return graphql.Null
-	}
-	if resTmp == nil {
-		if !graphql.HasFieldError(ctx, fc) {
-			ec.Errorf(ctx, "must not be null")
-		}
-		return graphql.Null
-	}
-	res := resTmp.([]*model1.DailyErrorCount)
-	fc.Result = res
-	return ec.marshalNDailyErrorCount2ᚕᚖgithubᚗcomᚋhighlightᚑrunᚋhighlightᚋbackendᚋmodelᚐDailyErrorCount(ctx, field.Selections, res)
-}
-
-func (ec *executionContext) fieldContext_Query_dailyErrorsCount(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "Query",
-		Field:      field,
-		IsMethod:   true,
-		IsResolver: true,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			switch field.Name {
-			case "project_id":
-				return ec.fieldContext_DailyErrorCount_project_id(ctx, field)
-			case "date":
-				return ec.fieldContext_DailyErrorCount_date(ctx, field)
-			case "count":
-				return ec.fieldContext_DailyErrorCount_count(ctx, field)
-			}
-			return nil, fmt.Errorf("no field named %q was found under type DailyErrorCount", field.Name)
-		},
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			err = ec.Recover(ctx, r)
-			ec.Error(ctx, err)
-		}
-	}()
-	ctx = graphql.WithFieldContext(ctx, fc)
-	if fc.Args, err = ec.field_Query_dailyErrorsCount_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return
 	}
@@ -53864,90 +53324,6 @@ func (ec *executionContext) _CommentReply(ctx context.Context, sel ast.Selection
 	return out
 }
 
-var dailyErrorCountImplementors = []string{"DailyErrorCount"}
-
-func (ec *executionContext) _DailyErrorCount(ctx context.Context, sel ast.SelectionSet, obj *model1.DailyErrorCount) graphql.Marshaler {
-	fields := graphql.CollectFields(ec.OperationContext, sel, dailyErrorCountImplementors)
-	out := graphql.NewFieldSet(fields)
-	var invalids uint32
-	for i, field := range fields {
-		switch field.Name {
-		case "__typename":
-			out.Values[i] = graphql.MarshalString("DailyErrorCount")
-		case "project_id":
-
-			out.Values[i] = ec._DailyErrorCount_project_id(ctx, field, obj)
-
-			if out.Values[i] == graphql.Null {
-				invalids++
-			}
-		case "date":
-
-			out.Values[i] = ec._DailyErrorCount_date(ctx, field, obj)
-
-			if out.Values[i] == graphql.Null {
-				invalids++
-			}
-		case "count":
-
-			out.Values[i] = ec._DailyErrorCount_count(ctx, field, obj)
-
-			if out.Values[i] == graphql.Null {
-				invalids++
-			}
-		default:
-			panic("unknown field " + strconv.Quote(field.Name))
-		}
-	}
-	out.Dispatch()
-	if invalids > 0 {
-		return graphql.Null
-	}
-	return out
-}
-
-var dailySessionCountImplementors = []string{"DailySessionCount"}
-
-func (ec *executionContext) _DailySessionCount(ctx context.Context, sel ast.SelectionSet, obj *model1.DailySessionCount) graphql.Marshaler {
-	fields := graphql.CollectFields(ec.OperationContext, sel, dailySessionCountImplementors)
-	out := graphql.NewFieldSet(fields)
-	var invalids uint32
-	for i, field := range fields {
-		switch field.Name {
-		case "__typename":
-			out.Values[i] = graphql.MarshalString("DailySessionCount")
-		case "project_id":
-
-			out.Values[i] = ec._DailySessionCount_project_id(ctx, field, obj)
-
-			if out.Values[i] == graphql.Null {
-				invalids++
-			}
-		case "date":
-
-			out.Values[i] = ec._DailySessionCount_date(ctx, field, obj)
-
-			if out.Values[i] == graphql.Null {
-				invalids++
-			}
-		case "count":
-
-			out.Values[i] = ec._DailySessionCount_count(ctx, field, obj)
-
-			if out.Values[i] == graphql.Null {
-				invalids++
-			}
-		default:
-			panic("unknown field " + strconv.Quote(field.Name))
-		}
-	}
-	out.Dispatch()
-	if invalids > 0 {
-		return graphql.Null
-	}
-	return out
-}
-
 var dashboardImplementors = []string{"Dashboard"}
 
 func (ec *executionContext) _Dashboard(ctx context.Context, sel ast.SelectionSet, obj *model1.Dashboard) graphql.Marshaler {
@@ -57788,52 +57164,6 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 					}
 				}()
 				res = ec._Query_projectHasViewedASession(ctx, field)
-				return res
-			}
-
-			rrm := func(ctx context.Context) graphql.Marshaler {
-				return ec.OperationContext.RootResolverMiddleware(ctx, innerFunc)
-			}
-
-			out.Concurrently(i, func() graphql.Marshaler {
-				return rrm(innerCtx)
-			})
-		case "dailySessionsCount":
-			field := field
-
-			innerFunc := func(ctx context.Context) (res graphql.Marshaler) {
-				defer func() {
-					if r := recover(); r != nil {
-						ec.Error(ctx, ec.Recover(ctx, r))
-					}
-				}()
-				res = ec._Query_dailySessionsCount(ctx, field)
-				if res == graphql.Null {
-					atomic.AddUint32(&invalids, 1)
-				}
-				return res
-			}
-
-			rrm := func(ctx context.Context) graphql.Marshaler {
-				return ec.OperationContext.RootResolverMiddleware(ctx, innerFunc)
-			}
-
-			out.Concurrently(i, func() graphql.Marshaler {
-				return rrm(innerCtx)
-			})
-		case "dailyErrorsCount":
-			field := field
-
-			innerFunc := func(ctx context.Context) (res graphql.Marshaler) {
-				defer func() {
-					if r := recover(); r != nil {
-						ec.Error(ctx, ec.Recover(ctx, r))
-					}
-				}()
-				res = ec._Query_dailyErrorsCount(ctx, field)
-				if res == graphql.Null {
-					atomic.AddUint32(&invalids, 1)
-				}
 				return res
 			}
 
@@ -62621,82 +61951,6 @@ func (ec *executionContext) marshalNCommentReply2ᚕᚖgithubᚗcomᚋhighlight�
 	return ret
 }
 
-func (ec *executionContext) marshalNDailyErrorCount2ᚕᚖgithubᚗcomᚋhighlightᚑrunᚋhighlightᚋbackendᚋmodelᚐDailyErrorCount(ctx context.Context, sel ast.SelectionSet, v []*model1.DailyErrorCount) graphql.Marshaler {
-	ret := make(graphql.Array, len(v))
-	var wg sync.WaitGroup
-	isLen1 := len(v) == 1
-	if !isLen1 {
-		wg.Add(len(v))
-	}
-	for i := range v {
-		i := i
-		fc := &graphql.FieldContext{
-			Index:  &i,
-			Result: &v[i],
-		}
-		ctx := graphql.WithFieldContext(ctx, fc)
-		f := func(i int) {
-			defer func() {
-				if r := recover(); r != nil {
-					ec.Error(ctx, ec.Recover(ctx, r))
-					ret = nil
-				}
-			}()
-			if !isLen1 {
-				defer wg.Done()
-			}
-			ret[i] = ec.marshalODailyErrorCount2ᚖgithubᚗcomᚋhighlightᚑrunᚋhighlightᚋbackendᚋmodelᚐDailyErrorCount(ctx, sel, v[i])
-		}
-		if isLen1 {
-			f(i)
-		} else {
-			go f(i)
-		}
-
-	}
-	wg.Wait()
-
-	return ret
-}
-
-func (ec *executionContext) marshalNDailySessionCount2ᚕᚖgithubᚗcomᚋhighlightᚑrunᚋhighlightᚋbackendᚋmodelᚐDailySessionCount(ctx context.Context, sel ast.SelectionSet, v []*model1.DailySessionCount) graphql.Marshaler {
-	ret := make(graphql.Array, len(v))
-	var wg sync.WaitGroup
-	isLen1 := len(v) == 1
-	if !isLen1 {
-		wg.Add(len(v))
-	}
-	for i := range v {
-		i := i
-		fc := &graphql.FieldContext{
-			Index:  &i,
-			Result: &v[i],
-		}
-		ctx := graphql.WithFieldContext(ctx, fc)
-		f := func(i int) {
-			defer func() {
-				if r := recover(); r != nil {
-					ec.Error(ctx, ec.Recover(ctx, r))
-					ret = nil
-				}
-			}()
-			if !isLen1 {
-				defer wg.Done()
-			}
-			ret[i] = ec.marshalODailySessionCount2ᚖgithubᚗcomᚋhighlightᚑrunᚋhighlightᚋbackendᚋmodelᚐDailySessionCount(ctx, sel, v[i])
-		}
-		if isLen1 {
-			f(i)
-		} else {
-			go f(i)
-		}
-
-	}
-	wg.Wait()
-
-	return ret
-}
-
 func (ec *executionContext) marshalNDashboardDefinition2ᚕᚖgithubᚗcomᚋhighlightᚑrunᚋhighlightᚋbackendᚋprivateᚑgraphᚋgraphᚋmodelᚐDashboardDefinition(ctx context.Context, sel ast.SelectionSet, v []*model.DashboardDefinition) graphql.Marshaler {
 	ret := make(graphql.Array, len(v))
 	var wg sync.WaitGroup
@@ -62861,11 +62115,6 @@ func (ec *executionContext) unmarshalNDateHistogramBucketSize2ᚖgithubᚗcomᚋ
 
 func (ec *executionContext) unmarshalNDateHistogramOptions2githubᚗcomᚋhighlightᚑrunᚋhighlightᚋbackendᚋprivateᚑgraphᚋgraphᚋmodelᚐDateHistogramOptions(ctx context.Context, v interface{}) (model.DateHistogramOptions, error) {
 	res, err := ec.unmarshalInputDateHistogramOptions(ctx, v)
-	return res, graphql.ErrorOnPath(ctx, err)
-}
-
-func (ec *executionContext) unmarshalNDateRangeInput2githubᚗcomᚋhighlightᚑrunᚋhighlightᚋbackendᚋprivateᚑgraphᚋgraphᚋmodelᚐDateRangeInput(ctx context.Context, v interface{}) (model.DateRangeInput, error) {
-	res, err := ec.unmarshalInputDateRangeInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
 }
 
@@ -66298,20 +65547,6 @@ func (ec *executionContext) marshalOCommentReply2ᚖgithubᚗcomᚋhighlightᚑr
 		return graphql.Null
 	}
 	return ec._CommentReply(ctx, sel, v)
-}
-
-func (ec *executionContext) marshalODailyErrorCount2ᚖgithubᚗcomᚋhighlightᚑrunᚋhighlightᚋbackendᚋmodelᚐDailyErrorCount(ctx context.Context, sel ast.SelectionSet, v *model1.DailyErrorCount) graphql.Marshaler {
-	if v == nil {
-		return graphql.Null
-	}
-	return ec._DailyErrorCount(ctx, sel, v)
-}
-
-func (ec *executionContext) marshalODailySessionCount2ᚖgithubᚗcomᚋhighlightᚑrunᚋhighlightᚋbackendᚋmodelᚐDailySessionCount(ctx context.Context, sel ast.SelectionSet, v *model1.DailySessionCount) graphql.Marshaler {
-	if v == nil {
-		return graphql.Null
-	}
-	return ec._DailySessionCount(ctx, sel, v)
 }
 
 func (ec *executionContext) unmarshalODashboardChartType2ᚖgithubᚗcomᚋhighlightᚑrunᚋhighlightᚋbackendᚋprivateᚑgraphᚋgraphᚋmodelᚐDashboardChartType(ctx context.Context, v interface{}) (*model.DashboardChartType, error) {

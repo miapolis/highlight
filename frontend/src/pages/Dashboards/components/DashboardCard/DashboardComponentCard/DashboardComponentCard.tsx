@@ -9,10 +9,6 @@ import KeyPerformanceIndicators from '@pages/Home/components/KeyPerformanceIndic
 import RageClicksForProjectTable from '@pages/Home/components/RageClicksForProjectTable/RageClicksForProjectTable'
 import ReferrersTable from '@pages/Home/components/ReferrersTable/ReferrersTable'
 import TopRoutesTable from '@pages/Home/components/TopRoutesTable/TopRoutesTable'
-import {
-	ErrorCountGraph,
-	SessionCountGraph,
-} from '@pages/Home/utils/HomeCharts'
 import classNames from 'classnames'
 import React, { FunctionComponent, useState } from 'react'
 
@@ -30,8 +26,6 @@ export const PrebuiltComponentMap: {
 	[MetricViewComponentType.KeyPerformanceGauge]: {
 		fc: KeyPerformanceIndicators,
 	},
-	[MetricViewComponentType.SessionCountChart]: { fc: SessionCountGraph },
-	[MetricViewComponentType.ErrorCountChart]: { fc: ErrorCountGraph },
 	[MetricViewComponentType.ReferrersTable]: { fc: ReferrersTable },
 	[MetricViewComponentType.ActiveUsersTable]: {
 		fc: ActiveUsersTable,

@@ -1131,7 +1131,7 @@ func (r *mutationResolver) UpdateBillingDetails(ctx context.Context, workspaceID
 		return nil, e.Wrap(err, "must have ADMIN role to update billing details")
 	}
 
-	if err := r.updateBillingDetails(*workspace.StripeCustomerID); err != nil {
+	if err := r.updateBillingDetails(ctx, *workspace.StripeCustomerID); err != nil {
 		return nil, e.Wrap(err, "error updating billing details")
 	}
 
@@ -3204,6 +3204,7 @@ func (r *queryResolver) Accounts(ctx context.Context) ([]*modelInputs.Account, e
 		return nil, e.New("You don't have access to this data")
 	}
 
+	// TODO(vkorolik) replace with influxdb query
 	accounts := []*modelInputs.Account{}
 	if err := r.DB.Raw(`
 		SELECT w.id, w.name, w.plan_tier, w.unlimited_members, w.stripe_customer_id,
@@ -3337,6 +3338,7 @@ func (r *queryResolver) AccountDetails(ctx context.Context, workspaceID int) (*m
 		return nil, e.Wrap(err, "error getting workspace info")
 	}
 
+	// TODO(vkorolik) replace with influxdb query
 	var queriedMonths = []struct {
 		Sum   int
 		Month string
@@ -4210,52 +4212,6 @@ func (r *queryResolver) ProjectHasViewedASession(ctx context.Context, projectID 
 	return &session, nil
 }
 
-// DailySessionsCount is the resolver for the dailySessionsCount field.
-func (r *queryResolver) DailySessionsCount(ctx context.Context, projectID int, dateRange modelInputs.DateRangeInput) ([]*model.DailySessionCount, error) {
-	if _, err := r.isAdminInProjectOrDemoProject(ctx, projectID); err != nil {
-		return nil, e.Wrap(err, "admin not found in project")
-	}
-
-	// If demo project, load stats for project_id 1
-	if projectID == 0 {
-		projectID = 1
-	}
-
-	dailySessions := []*model.DailySessionCount{}
-
-	startDateUTC := time.Date(dateRange.StartDate.UTC().Year(), dateRange.StartDate.UTC().Month(), dateRange.StartDate.UTC().Day(), 0, 0, 0, 0, time.UTC)
-	endDateUTC := time.Date(dateRange.EndDate.UTC().Year(), dateRange.EndDate.UTC().Month(), dateRange.EndDate.UTC().Day(), 0, 0, 0, 0, time.UTC)
-
-	if err := r.DB.Raw("SELECT * FROM daily_session_counts_view WHERE date BETWEEN ? AND ? AND project_id = ?", startDateUTC, endDateUTC, projectID).Find(&dailySessions).Error; err != nil {
-		return nil, e.Wrap(err, "error reading from daily sessions")
-	}
-
-	return dailySessions, nil
-}
-
-// DailyErrorsCount is the resolver for the dailyErrorsCount field.
-func (r *queryResolver) DailyErrorsCount(ctx context.Context, projectID int, dateRange modelInputs.DateRangeInput) ([]*model.DailyErrorCount, error) {
-	if _, err := r.isAdminInProjectOrDemoProject(ctx, projectID); err != nil {
-		return nil, e.Wrap(err, "admin not found in project")
-	}
-
-	// If demo project, load stats for project_id 1
-	if projectID == 0 {
-		projectID = 1
-	}
-
-	dailyErrors := []*model.DailyErrorCount{}
-
-	startDateUTC := time.Date(dateRange.StartDate.UTC().Year(), dateRange.StartDate.UTC().Month(), dateRange.StartDate.UTC().Day(), 0, 0, 0, 0, time.UTC)
-	endDateUTC := time.Date(dateRange.EndDate.UTC().Year(), dateRange.EndDate.UTC().Month(), dateRange.EndDate.UTC().Day(), 0, 0, 0, 0, time.UTC)
-
-	if err := r.DB.Where("project_id = ?", projectID).Where("date BETWEEN ? AND ?", startDateUTC, endDateUTC).Find(&dailyErrors).Error; err != nil {
-		return nil, e.Wrap(err, "error reading from daily errors")
-	}
-
-	return dailyErrors, nil
-}
-
 // DailyErrorFrequency is the resolver for the dailyErrorFrequency field.
 func (r *queryResolver) DailyErrorFrequency(ctx context.Context, projectID int, errorGroupSecureID string, dateOffset int) ([]int64, error) {
 	errGroup, err := r.canAdminViewErrorGroup(ctx, errorGroupSecureID, false)
@@ -4900,7 +4856,7 @@ func (r *queryResolver) BillingDetails(ctx context.Context, workspaceID int) (*m
 	var membersMeter int64
 
 	g.Go(func() error {
-		meter, err = pricing.GetWorkspaceMeter(r.DB, workspaceID)
+		meter, err = pricing.GetWorkspaceMeter(ctx, r.DB, r.TDB, workspaceID)
 		if err != nil {
 			return e.Wrap(err, "error from get quota")
 		}

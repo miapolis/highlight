@@ -1401,20 +1401,6 @@ query GetTopUsers($project_id: ID!, $lookBackPeriod: Int!) {
 	}
 }
 
-query GetDailySessionsCount($project_id: ID!, $date_range: DateRangeInput!) {
-	dailySessionsCount(project_id: $project_id, date_range: $date_range) {
-		date
-		count
-	}
-}
-
-query GetDailyErrorsCount($project_id: ID!, $date_range: DateRangeInput!) {
-	dailyErrorsCount(project_id: $project_id, date_range: $date_range) {
-		date
-		count
-	}
-}
-
 query GetRageClicksForProject($project_id: ID!, $lookBackPeriod: Int!) {
 	rageClicksForProject(
 		project_id: $project_id

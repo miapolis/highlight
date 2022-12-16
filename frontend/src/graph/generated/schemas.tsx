@@ -168,20 +168,6 @@ export type CommentReply = {
 	updated_at: Scalars['Timestamp']
 }
 
-export type DailyErrorCount = {
-	__typename?: 'DailyErrorCount'
-	count: Scalars['Int64']
-	date: Scalars['Timestamp']
-	project_id: Scalars['ID']
-}
-
-export type DailySessionCount = {
-	__typename?: 'DailySessionCount'
-	count: Scalars['Int64']
-	date: Scalars['Timestamp']
-	project_id: Scalars['ID']
-}
-
 export type Dashboard = {
 	__typename?: 'Dashboard'
 	id: Scalars['ID']
@@ -1322,8 +1308,6 @@ export type Query = {
 	clickup_teams: Array<ClickUpTeam>
 	customer_portal_url: Scalars['String']
 	dailyErrorFrequency: Array<Scalars['Int64']>
-	dailyErrorsCount: Array<Maybe<DailyErrorCount>>
-	dailySessionsCount: Array<Maybe<DailySessionCount>>
 	dashboard_definitions: Array<Maybe<DashboardDefinition>>
 	discord_channel_suggestions: Array<DiscordChannel>
 	email_opt_outs: Array<EmailOptOutCategory>
@@ -1483,16 +1467,6 @@ export type QueryCustomer_Portal_UrlArgs = {
 export type QueryDailyErrorFrequencyArgs = {
 	date_offset: Scalars['Int']
 	error_group_secure_id: Scalars['String']
-	project_id: Scalars['ID']
-}
-
-export type QueryDailyErrorsCountArgs = {
-	date_range: DateRangeInput
-	project_id: Scalars['ID']
-}
-
-export type QueryDailySessionsCountArgs = {
-	date_range: DateRangeInput
 	project_id: Scalars['ID']
 }
 

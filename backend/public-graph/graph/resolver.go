@@ -36,7 +36,6 @@ import (
 	"github.com/highlight-run/highlight/backend/model"
 	"github.com/highlight-run/highlight/backend/opensearch"
 	"github.com/highlight-run/highlight/backend/pricing"
-	"github.com/highlight-run/highlight/backend/private-graph/graph"
 	privateModel "github.com/highlight-run/highlight/backend/private-graph/graph/model"
 	publicModel "github.com/highlight-run/highlight/backend/public-graph/graph/model"
 	"github.com/highlight-run/highlight/backend/redis"
@@ -1186,7 +1185,7 @@ func (r *Resolver) InitializeSessionImpl(ctx context.Context, input *kafka_queue
 	}
 
 	// determine if session is within billing quota
-	withinBillingQuota, quotaPercent := r.isWithinBillingQuota(project, workspace, *session.PayloadUpdatedAt)
+	withinBillingQuota, quotaPercent := r.isWithinBillingQuota(ctx, project, workspace, *session.PayloadUpdatedAt)
 	setupSpan.Finish()
 
 	// Get the user's ip, get geolocation data
@@ -1796,7 +1795,7 @@ func (r *Resolver) getWorkspace(workspaceID int) (*model.Workspace, error) {
 	return &workspace, nil
 }
 
-func (r *Resolver) isWithinBillingQuota(project *model.Project, workspace *model.Workspace, now time.Time) (bool, float64) {
+func (r *Resolver) isWithinBillingQuota(ctx context.Context, project *model.Project, workspace *model.Workspace, now time.Time) (bool, float64) {
 	if workspace.TrialEndDate != nil && workspace.TrialEndDate.After(now) {
 		return true, 0
 	}
@@ -1813,7 +1812,7 @@ func (r *Resolver) isWithinBillingQuota(project *model.Project, workspace *model
 		quota = pricing.TypeToQuota(stripePlan)
 	}
 
-	monthToDateSessionCount, err := pricing.GetWorkspaceMeter(r.DB, workspace.ID)
+	monthToDateSessionCount, err := pricing.GetWorkspaceMeter(ctx, r.DB, r.TDB, workspace.ID)
 	if err != nil {
 		log.Warn(fmt.Sprintf("error getting sessions meter for workspace %d", workspace.ID))
 	}
@@ -2101,7 +2100,7 @@ func (r *Resolver) PushMetricsImpl(ctx context.Context, sessionSecureID string, 
 			// the session is created. this would mean that the downsample task does not
 			// see the metric, causing it to be lost. instead, write it directly to the
 			// downsampled bucket.
-			downsampledMetric = downsampledMetric || m.Name == graph.SessionActiveMetricName
+			downsampledMetric = downsampledMetric || m.Name == pricing.SessionActiveMetricName
 		}
 		if len(newMetrics) > 0 {
 			if err := r.DB.Create(&newMetrics).Error; err != nil {

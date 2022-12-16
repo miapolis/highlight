@@ -3235,38 +3235,6 @@ export type GetTopUsersQuery = { __typename?: 'Query' } & {
 	>
 }
 
-export type GetDailySessionsCountQueryVariables = Types.Exact<{
-	project_id: Types.Scalars['ID']
-	date_range: Types.DateRangeInput
-}>
-
-export type GetDailySessionsCountQuery = { __typename?: 'Query' } & {
-	dailySessionsCount: Array<
-		Types.Maybe<
-			{ __typename?: 'DailySessionCount' } & Pick<
-				Types.DailySessionCount,
-				'date' | 'count'
-			>
-		>
-	>
-}
-
-export type GetDailyErrorsCountQueryVariables = Types.Exact<{
-	project_id: Types.Scalars['ID']
-	date_range: Types.DateRangeInput
-}>
-
-export type GetDailyErrorsCountQuery = { __typename?: 'Query' } & {
-	dailyErrorsCount: Array<
-		Types.Maybe<
-			{ __typename?: 'DailyErrorCount' } & Pick<
-				Types.DailyErrorCount,
-				'date' | 'count'
-			>
-		>
-	>
-}
-
 export type GetRageClicksForProjectQueryVariables = Types.Exact<{
 	project_id: Types.Scalars['ID']
 	lookBackPeriod: Types.Scalars['Int']
@@ -3954,8 +3922,6 @@ export const namedOperations = {
 		GetNewUsersCount: 'GetNewUsersCount' as const,
 		GetAverageSessionLength: 'GetAverageSessionLength' as const,
 		GetTopUsers: 'GetTopUsers' as const,
-		GetDailySessionsCount: 'GetDailySessionsCount' as const,
-		GetDailyErrorsCount: 'GetDailyErrorsCount' as const,
 		GetRageClicksForProject: 'GetRageClicksForProject' as const,
 		GetDailyErrorFrequency: 'GetDailyErrorFrequency' as const,
 		GetErrorDistribution: 'GetErrorDistribution' as const,

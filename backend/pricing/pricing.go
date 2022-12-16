@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/highlight-run/highlight/backend/email"
@@ -13,12 +14,14 @@ import (
 	e "github.com/pkg/errors"
 	"github.com/sendgrid/sendgrid-go"
 	log "github.com/sirupsen/logrus"
-	stripe "github.com/stripe/stripe-go/v72"
+	"github.com/stripe/stripe-go/v72"
 	"github.com/stripe/stripe-go/v72/client"
 	"gopkg.in/DataDog/dd-trace-go.v1/ddtrace/tracer"
 	"gorm.io/gorm"
-)
 
+	"github.com/highlight-run/highlight/backend/timeseries"
+)
+ 
 const (
 	highlightProductType             string = "highlightProductType"
 	highlightProductTier             string = "highlightProductTier"
@@ -40,48 +43,65 @@ const (
 	SubscriptionIntervalAnnual  SubscriptionInterval = "ANNUAL"
 )
 
+const (
+	SessionActiveMetricName    = "sessionActiveLength"
+	SessionProcessedMetricName = "sessionProcessed"
+)
+
 func GetMembersMeter(DB *gorm.DB, workspaceID int) int64 {
 	return DB.Model(&model.Workspace{Model: model.Model{ID: workspaceID}}).Association("Admins").Count()
 }
 
-func GetWorkspaceMeter(DB *gorm.DB, workspaceID int) (int64, error) {
+func GetWorkspaceMeter(ctx context.Context, DB *gorm.DB, TDB timeseries.DB, workspaceID int) (int64, error) {
+	dateRange, err := getWorkspaceBillingInterval(DB, workspaceID)
+	if err != nil {
+		return 0, e.Wrapf(err, "failed to perform billing interval lookup workspace: %d", workspaceID)
+	}
+	var projectIDs []int
+	if err := DB.Raw(`SELECT id FROM projects WHERE workspace_id=? AND free_tier = false`, workspaceID).
+		Scan(&projectIDs).Error; err != nil {
+		return 0, e.Wrap(err, "error querying for workspace projects")
+	}
 	var meter int64
-	if err := DB.Raw(`
-			SELECT COALESCE(SUM(count), 0) as currentPeriodSessionCount
-			FROM daily_session_counts_view
-			WHERE project_id in (SELECT id FROM projects WHERE workspace_id=? AND free_tier = false)
-			AND date >= (
-				SELECT COALESCE(next_invoice_date - interval '1 month', billing_period_start, date_trunc('month', now(), 'UTC'))
-				FROM workspaces
-				WHERE id=?)
-			AND date < (
-				SELECT COALESCE(next_invoice_date, billing_period_end, date_trunc('month', now(), 'UTC') + interval '1 month')
-				FROM workspaces
-				WHERE id=?)`, workspaceID, workspaceID, workspaceID).
-		Scan(&meter).Error; err != nil {
-		return 0, e.Wrap(err, "error querying for session meter")
+	for _, projectID := range projectIDs {
+		query := fmt.Sprintf(`
+      from(bucket: "%[1]s")
+		|> range(start: %[2]s, stop: %[3]s)
+		|> filter(fn: (r) => r._measurement == "%[4]s")
+		|> filter(fn: (r) => r._field == "%[5]s")
+		|> filter(fn: (r) => r.Excluded == "false")
+		|> filter(fn: (r) => r.Processed == "true")
+		|> filter(fn: (r) => r._value >= 1000)
+		|> count()
+	`, TDB.GetBucket(strconv.Itoa(projectID), timeseries.Metrics), dateRange.StartDate.Format(time.RFC3339), dateRange.EndDate.Format(time.RFC3339), timeseries.Metric.AggName, SessionActiveMetricName)
+		span, _ := tracer.StartSpanFromContext(ctx, "tdb.getWorkspaceMeter")
+		span.SetTag("projectID", projectID)
+		span.SetTag("workspaceID", workspaceID)
+		results, err := TDB.Query(ctx, query)
+		if err != nil {
+			return 0, e.Wrapf(err, "failed to perform tdb query for workspace meter workspace: %d project: %d", workspaceID, projectID)
+		}
+		meter += results[0].Value.(int64)
 	}
 	return meter, nil
 }
 
-func GetProjectMeter(DB *gorm.DB, project *model.Project) (int64, error) {
-	var meter int64
+type DateRange struct {
+	StartDate *time.Time
+	EndDate   *time.Time
+}
+
+func getWorkspaceBillingInterval(DB *gorm.DB, workspaceID int) (*DateRange, error) {
+	var dateRange DateRange
 	if err := DB.Raw(`
-			SELECT COALESCE(SUM(count), 0) as currentPeriodSessionCount
-			FROM daily_session_counts_view
-			WHERE project_id = ?
-			AND date >= (
-				SELECT COALESCE(next_invoice_date - interval '1 month', billing_period_start, date_trunc('month', now(), 'UTC'))
+			SELECT COALESCE(next_invoice_date - interval '1 month', billing_period_start, date_trunc('month', now(), 'UTC')) as start_date, 
+			       COALESCE(next_invoice_date, billing_period_end, date_trunc('month', now(), 'UTC') + interval '1 month') as end_date
 				FROM workspaces
-				WHERE id=?)
-			AND date < (
-				SELECT COALESCE(next_invoice_date, billing_period_end, date_trunc('month', now(), 'UTC') + interval '1 month')
-				FROM workspaces
-				WHERE id=?)`, project.ID, project.WorkspaceID, project.WorkspaceID).
-		Scan(&meter).Error; err != nil {
-		return 0, e.Wrap(err, "error querying for session meter")
+				WHERE id=?`, workspaceID).
+		Scan(&dateRange).Error; err != nil {
+		return nil, e.Wrap(err, "error querying for workspace billing interval")
 	}
-	return meter, nil
+	return &dateRange, nil
 }
 
 func GetProjectQuotaOverflow(ctx context.Context, DB *gorm.DB, projectID int) (int64, error) {
@@ -264,11 +284,11 @@ func GetStripePrices(stripeClient *client.API, productTier backend.PlanType, int
 	return priceMap, nil
 }
 
-func ReportUsageForWorkspace(DB *gorm.DB, stripeClient *client.API, mailClient *sendgrid.Client, workspaceID int) error {
-	return reportUsage(DB, stripeClient, mailClient, workspaceID, nil)
+func ReportUsageForWorkspace(ctx context.Context, DB *gorm.DB, TDB timeseries.DB, stripeClient *client.API, mailClient *sendgrid.Client, workspaceID int) error {
+	return reportUsage(ctx, DB, TDB, stripeClient, mailClient, workspaceID, nil)
 }
 
-func reportUsage(DB *gorm.DB, stripeClient *client.API, mailClient *sendgrid.Client, workspaceID int, productType *ProductType) error {
+func reportUsage(ctx context.Context, DB *gorm.DB, TDB timeseries.DB, stripeClient *client.API, mailClient *sendgrid.Client, workspaceID int, productType *ProductType) error {
 	var workspace model.Workspace
 	if err := DB.Model(&workspace).Where("id = ?", workspaceID).First(&workspace).Error; err != nil {
 		return e.Wrap(err, "error querying workspace")
@@ -443,7 +463,7 @@ func reportUsage(DB *gorm.DB, stripeClient *client.API, mailClient *sendgrid.Cli
 
 	if productType == nil || *productType == ProductTypeSessions {
 		newPrice := prices[ProductTypeSessions]
-		meter, err := GetWorkspaceMeter(DB, workspaceID)
+		meter, err := GetWorkspaceMeter(ctx, DB, TDB, workspaceID)
 		if err != nil {
 			return e.Wrap(err, "error getting sessions meter")
 		}
@@ -485,7 +505,7 @@ func reportUsage(DB *gorm.DB, stripeClient *client.API, mailClient *sendgrid.Cli
 	return nil
 }
 
-func ReportAllUsage(DB *gorm.DB, stripeClient *client.API, mailClient *sendgrid.Client) {
+func ReportAllUsage(ctx context.Context, DB *gorm.DB, TDB timeseries.DB, stripeClient *client.API, mailClient *sendgrid.Client) {
 	// Get all workspace IDs
 	var workspaceIDs []int
 	if err := DB.Raw(`
@@ -499,7 +519,7 @@ func ReportAllUsage(DB *gorm.DB, stripeClient *client.API, mailClient *sendgrid.
 	}
 
 	for _, workspaceID := range workspaceIDs {
-		if err := reportUsage(DB, stripeClient, mailClient, workspaceID, nil); err != nil {
+		if err := reportUsage(ctx, DB, TDB, stripeClient, mailClient, workspaceID, nil); err != nil {
 			log.Error(e.Wrapf(err, "error reporting usage for workspace %d", workspaceID))
 		}
 	}

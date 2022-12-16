@@ -876,11 +876,15 @@ func (w *Worker) processSession(ctx context.Context, s *model.Session) error {
 		}
 	}
 
+	length := float64(accumulator.ActiveDuration.Milliseconds())
+	if length < 1 {
+		length = float64(sessionTotalLengthInMilliseconds)
+	}
 	if err := w.PublicResolver.PushMetricsImpl(ctx, s.SecureID, []*publicModel.MetricInput{
 		{
 			SessionSecureID: s.SecureID,
 			Timestamp:       s.CreatedAt,
-			Name:            mgraph.SessionActiveMetricName,
+			Name:            pricing.SessionActiveMetricName,
 			Value:           float64(accumulator.ActiveDuration.Milliseconds()),
 			Category:        pointy.String(model.InternalMetricCategory),
 			Tags: []*publicModel.MetricTag{
@@ -891,7 +895,7 @@ func (w *Worker) processSession(ctx context.Context, s *model.Session) error {
 		{
 			SessionSecureID: s.SecureID,
 			Timestamp:       s.CreatedAt,
-			Name:            mgraph.SessionProcessedMetricName,
+			Name:            pricing.SessionProcessedMetricName,
 			Value:           float64(s.ID),
 			Category:        pointy.String(model.InternalMetricCategory),
 			Tags: []*publicModel.MetricTag{
@@ -1154,7 +1158,7 @@ func (w *Worker) Start() {
 }
 
 func (w *Worker) ReportStripeUsage() {
-	pricing.ReportAllUsage(w.Resolver.DB, w.Resolver.StripeClient, w.Resolver.MailClient)
+	pricing.ReportAllUsage(context.Background(), w.Resolver.DB, w.Resolver.TDB, w.Resolver.StripeClient, w.Resolver.MailClient)
 }
 
 func (w *Worker) UpdateOpenSearchIndex() {
@@ -1233,13 +1237,11 @@ func (w *Worker) RefreshMaterializedViews() {
 		if err != nil {
 			return err
 		}
-
-		return tx.Exec(`
-			REFRESH MATERIALIZED VIEW CONCURRENTLY daily_session_counts_view;
-		`).Error
+		// currently no materialized views used, but leaving this as a wrapper for future use
+		return nil
 
 	}); err != nil {
-		log.Fatal(e.Wrap(err, "Error refreshing daily_session_counts_view"))
+		log.Fatal(e.Wrap(err, "Error refreshing materialized views"))
 	}
 
 	type AggregateSessionCount struct {
@@ -1248,6 +1250,7 @@ func (w *Worker) RefreshMaterializedViews() {
 	}
 	counts := []AggregateSessionCount{}
 
+	// TODO(vkorolik) replace with influxdb query
 	if err := w.Resolver.DB.Raw(`
 		SELECT p.workspace_id, sum(d.count) as count
 		FROM daily_session_counts_view d

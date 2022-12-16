@@ -71,8 +71,6 @@ import (
 // It serves as dependency injection for your app, add any dependencies you require here.
 
 const ErrorGroupLookbackDays = 7
-const SessionActiveMetricName = "sessionActiveLength"
-const SessionProcessedMetricName = "sessionProcessed"
 
 var (
 	WhitelistedUID  = os.Getenv("WHITELISTED_FIREBASE_ACCOUNT")
@@ -1296,7 +1294,7 @@ func (r *Resolver) GenerateRandomStringURLSafe(n int) (string, error) {
 	return base64.URLEncoding.EncodeToString(b), err
 }
 
-func (r *Resolver) updateBillingDetails(stripeCustomerID string) error {
+func (r *Resolver) updateBillingDetails(ctx context.Context, stripeCustomerID string) error {
 	customerParams := &stripe.CustomerParams{}
 	customerParams.AddExpand("subscriptions")
 	c, err := r.StripeClient.Customers.Get(stripeCustomerID, customerParams)
@@ -1354,7 +1352,7 @@ func (r *Resolver) updateBillingDetails(stripeCustomerID string) error {
 	}
 
 	// Plan has been updated, report the latest usage data to Stripe
-	if err := pricing.ReportUsageForWorkspace(r.DB, r.StripeClient, r.MailClient, workspace.ID); err != nil {
+	if err := pricing.ReportUsageForWorkspace(ctx, r.DB, r.TDB, r.StripeClient, r.MailClient, workspace.ID); err != nil {
 		return e.Wrap(err, "STRIPE_INTEGRATION_ERROR error reporting usage after updating details")
 	}
 
@@ -1723,7 +1721,7 @@ func (r *Resolver) StripeWebhook(endpointSecret string) func(http.ResponseWriter
 				return
 			}
 
-			if err := r.updateBillingDetails(subscription.Customer.ID); err != nil {
+			if err := r.updateBillingDetails(context.Background(), subscription.Customer.ID); err != nil {
 				log.Error(e.Wrap(err, "failed to update billing details"))
 				w.WriteHeader(http.StatusInternalServerError)
 				return
@@ -3025,7 +3023,7 @@ func CalculateMetricUnitConversion(originalUnits *string, desiredUnits *string) 
 func MetricOriginalUnits(metricName string) (originalUnits *string) {
 	if strings.HasSuffix(metricName, "-ms") {
 		originalUnits = pointy.String("ms")
-	} else if map[string]bool{"fcp": true, "fid": true, "lcp": true, "ttfb": true, "jank": true, SessionActiveMetricName: true}[strings.ToLower(metricName)] {
+	} else if map[string]bool{"fcp": true, "fid": true, "lcp": true, "ttfb": true, "jank": true, pricing.SessionActiveMetricName: true}[strings.ToLower(metricName)] {
 		originalUnits = pointy.String("ms")
 	} else if map[string]bool{"latency": true}[strings.ToLower(metricName)] {
 		originalUnits = pointy.String("ns")
