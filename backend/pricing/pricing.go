@@ -21,7 +21,7 @@ import (
 
 	"github.com/highlight-run/highlight/backend/timeseries"
 )
- 
+
 const (
 	highlightProductType             string = "highlightProductType"
 	highlightProductTier             string = "highlightProductTier"
@@ -48,12 +48,17 @@ const (
 	SessionProcessedMetricName = "sessionProcessed"
 )
 
+type DateRange struct {
+	StartDate time.Time
+	EndDate   time.Time
+}
+
 func GetMembersMeter(DB *gorm.DB, workspaceID int) int64 {
 	return DB.Model(&model.Workspace{Model: model.Model{ID: workspaceID}}).Association("Admins").Count()
 }
 
 func GetWorkspaceMeter(ctx context.Context, DB *gorm.DB, TDB timeseries.DB, workspaceID int) (int64, error) {
-	dateRange, err := getWorkspaceBillingInterval(DB, workspaceID)
+	dateRange, err := GetWorkspaceBillingInterval(DB, workspaceID)
 	if err != nil {
 		return 0, e.Wrapf(err, "failed to perform billing interval lookup workspace: %d", workspaceID)
 	}
@@ -64,7 +69,17 @@ func GetWorkspaceMeter(ctx context.Context, DB *gorm.DB, TDB timeseries.DB, work
 	}
 	var meter int64
 	for _, projectID := range projectIDs {
-		query := fmt.Sprintf(`
+		m, err := GetProjectDateRangeMeter(ctx, TDB, projectID, dateRange)
+		if err != nil {
+			return 0, err
+		}
+		meter += m
+	}
+	return meter, nil
+}
+
+func GetProjectDateRangeMeter(ctx context.Context, TDB timeseries.DB, projectID int, dateRange *DateRange) (int64, error) {
+	query := fmt.Sprintf(`
       from(bucket: "%[1]s")
 		|> range(start: %[2]s, stop: %[3]s)
 		|> filter(fn: (r) => r._measurement == "%[4]s")
@@ -73,25 +88,20 @@ func GetWorkspaceMeter(ctx context.Context, DB *gorm.DB, TDB timeseries.DB, work
 		|> filter(fn: (r) => r.Processed == "true")
 		|> filter(fn: (r) => r._value >= 1000)
 		|> count()
-	`, TDB.GetBucket(strconv.Itoa(projectID), timeseries.Metrics), dateRange.StartDate.Format(time.RFC3339), dateRange.EndDate.Format(time.RFC3339), timeseries.Metric.AggName, SessionActiveMetricName)
-		span, _ := tracer.StartSpanFromContext(ctx, "tdb.getWorkspaceMeter")
-		span.SetTag("projectID", projectID)
-		span.SetTag("workspaceID", workspaceID)
-		results, err := TDB.Query(ctx, query)
-		if err != nil {
-			return 0, e.Wrapf(err, "failed to perform tdb query for workspace meter workspace: %d project: %d", workspaceID, projectID)
-		}
-		meter += results[0].Value.(int64)
+	`, TDB.GetBucket(strconv.Itoa(projectID), timeseries.Metric.AggName), dateRange.StartDate.Format(time.RFC3339), dateRange.EndDate.Format(time.RFC3339), timeseries.Metric.AggName, SessionActiveMetricName)
+	span, _ := tracer.StartSpanFromContext(ctx, "tdb.getWorkspaceMeter")
+	span.SetTag("projectID", projectID)
+	results, err := TDB.Query(ctx, query)
+	if err != nil {
+		return 0, e.Wrapf(err, "failed to perform tdb query for project meter project: %d", projectID)
 	}
-	return meter, nil
+	if len(results) > 0 {
+		return results[0].Value.(int64), nil
+	}
+	return 0, nil
 }
 
-type DateRange struct {
-	StartDate *time.Time
-	EndDate   *time.Time
-}
-
-func getWorkspaceBillingInterval(DB *gorm.DB, workspaceID int) (*DateRange, error) {
+func GetWorkspaceBillingInterval(DB *gorm.DB, workspaceID int) (*DateRange, error) {
 	var dateRange DateRange
 	if err := DB.Raw(`
 			SELECT COALESCE(next_invoice_date - interval '1 month', billing_period_start, date_trunc('month', now(), 'UTC')) as start_date, 

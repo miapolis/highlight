@@ -1248,16 +1248,25 @@ func (w *Worker) RefreshMaterializedViews() {
 		WorkspaceID int   `json:"workspace_id"`
 		Count       int64 `json:"count"`
 	}
-	counts := []AggregateSessionCount{}
 
-	// TODO(vkorolik) replace with influxdb query
-	if err := w.Resolver.DB.Raw(`
-		SELECT p.workspace_id, sum(d.count) as count
-		FROM daily_session_counts_view d
-		INNER JOIN projects p
-		ON d.project_id = p.id
-		GROUP BY p.workspace_id`).Scan(&counts).Error; err != nil {
-		log.Fatal(e.Wrap(err, "Error retrieving session counts for Hubspot update"))
+	var counts []AggregateSessionCount
+	var projects []struct {
+		ProjectID   int
+		WorkspaceID int
+	}
+	if err := w.Resolver.DB.Raw(`SELECT id as project_id, workspace_id FROM projects`).
+		Scan(&projects).Error; err != nil {
+		log.Fatal(e.Wrap(err, "Error retrieving projects for Hubspot update"))
+	}
+	for _, p := range projects {
+		meter, err := pricing.GetWorkspaceMeter(ctx, w.Resolver.DB, w.Resolver.TDB, p.WorkspaceID)
+		if err != nil {
+			log.Fatal(e.Wrapf(err, "Error performing workspace meter influx query for Hubspot update workspace: %d project %d", p.WorkspaceID, p.ProjectID))
+		}
+		counts = append(counts, AggregateSessionCount{
+			WorkspaceID: p.WorkspaceID,
+			Count:       meter,
+		})
 	}
 
 	if !util.IsDevOrTestEnv() {

@@ -3204,22 +3204,49 @@ func (r *queryResolver) Accounts(ctx context.Context) ([]*modelInputs.Account, e
 		return nil, e.New("You don't have access to this data")
 	}
 
-	// TODO(vkorolik) replace with influxdb query
-	accounts := []*modelInputs.Account{}
+	var accounts []*modelInputs.Account
 	if err := r.DB.Raw(`
 		SELECT w.id, w.name, w.plan_tier, w.unlimited_members, w.stripe_customer_id,
-		COALESCE(SUM(case when sc.date >= COALESCE(w.billing_period_start, date_trunc('month', now(), 'UTC')) then count else 0 end), 0) as session_count_cur,
-		COALESCE(SUM(case when sc.date >= COALESCE(w.billing_period_start, date_trunc('month', now(), 'UTC')) - interval '1 month' and sc.date < COALESCE(w.billing_period_start, date_trunc('month', now(), 'UTC')) then count else 0 end), 0) as session_count_prev,
-		COALESCE(SUM(case when sc.date >= COALESCE(w.billing_period_start, date_trunc('month', now(), 'UTC')) - interval '2 months' and sc.date < COALESCE(w.billing_period_start, date_trunc('month', now(), 'UTC')) - interval '1 month' then count else 0 end), 0) as session_count_prev_prev,
 		(select count(*) from workspace_admins wa where wa.workspace_id = w.id) as member_count
 		FROM workspaces w
-		INNER JOIN projects p
-		ON p.workspace_id = w.id
-		LEFT OUTER JOIN daily_session_counts_view sc
-		ON sc.project_id = p.id
-		group by 1, 2
-	`).Scan(&accounts).Error; err != nil {
-		return nil, e.Wrap(err, "error retrieving accounts for project")
+	`).
+		Scan(&accounts).Error; err != nil {
+		return nil, e.Wrap(err, "error querying for workspaces for accounts")
+	}
+
+	for _, account := range accounts {
+		dateRange, err := pricing.GetWorkspaceBillingInterval(r.DB, account.ID)
+		if err != nil {
+			return nil, err
+		}
+		var projectIDs []int
+		if err := r.DB.Raw(`SELECT id FROM projects WHERE workspace_id=?`, account.ID).
+			Scan(&projectIDs).Error; err != nil {
+			return nil, e.Wrap(err, "error querying for workspace projects")
+		}
+		for _, projectID := range projectIDs {
+			meter, err := pricing.GetProjectDateRangeMeter(ctx, r.TDB, projectID, dateRange)
+			if err != nil {
+				log.Error(err)
+			}
+			account.SessionCountCur += int(meter)
+			meter, err = pricing.GetProjectDateRangeMeter(ctx, r.TDB, projectID, &pricing.DateRange{
+				StartDate: dateRange.StartDate.Add(-time.Hour * 24 * 30),
+				EndDate:   dateRange.EndDate.Add(-time.Hour * 24 * 30),
+			})
+			if err != nil {
+				log.Error(err)
+			}
+			account.SessionCountPrev += int(meter)
+			meter, err = pricing.GetProjectDateRangeMeter(ctx, r.TDB, projectID, &pricing.DateRange{
+				StartDate: dateRange.StartDate.Add(-time.Hour * 24 * 30 * 2),
+				EndDate:   dateRange.EndDate.Add(-time.Hour * 24 * 30 * 2),
+			})
+			if err != nil {
+				log.Error(err)
+			}
+			account.SessionCountPrevPrev += int(meter)
+		}
 	}
 
 	viewCounts := []*modelInputs.Account{}
