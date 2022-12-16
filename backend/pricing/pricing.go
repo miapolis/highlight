@@ -54,6 +54,7 @@ var SessionActiveQueryFilters = fmt.Sprintf(`
 	|> filter(fn: (r) => r.Excluded == "false")
 	|> filter(fn: (r) => r.Processed == "true")
 	|> filter(fn: (r) => r._value >= 1000)
+	|> group()
 `, timeseries.Metric.AggName, SessionActiveMetricName)
 
 type DateRange struct {

@@ -3388,7 +3388,6 @@ func (r *queryResolver) AccountDetails(ctx context.Context, workspaceID int) (*m
 			  from(bucket: "%[1]s")
 				|> range(start: -1y)
 				%[2]s
-				|> group()
 				|> aggregateWindow(every: %[3]s, fn: count)
 			`, r.TDB.GetBucket(strconv.Itoa(projectID), timeseries.Metric.AggName), pricing.SessionActiveQueryFilters, agg)
 			span, _ := tracer.StartSpanFromContext(ctx, "tdb.getWorkspaceMeter")
