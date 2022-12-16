@@ -48,6 +48,14 @@ const (
 	SessionProcessedMetricName = "sessionProcessed"
 )
 
+var SessionActiveQueryFilters = fmt.Sprintf(`
+	|> filter(fn: (r) => r._measurement == "%[1]s")
+	|> filter(fn: (r) => r._field == "%[2]s")
+	|> filter(fn: (r) => r.Excluded == "false")
+	|> filter(fn: (r) => r.Processed == "true")
+	|> filter(fn: (r) => r._value >= 1000)
+`, timeseries.Metric.AggName, SessionActiveMetricName)
+
 type DateRange struct {
 	StartDate time.Time
 	EndDate   time.Time
@@ -82,13 +90,9 @@ func GetProjectDateRangeMeter(ctx context.Context, TDB timeseries.DB, projectID 
 	query := fmt.Sprintf(`
       from(bucket: "%[1]s")
 		|> range(start: %[2]s, stop: %[3]s)
-		|> filter(fn: (r) => r._measurement == "%[4]s")
-		|> filter(fn: (r) => r._field == "%[5]s")
-		|> filter(fn: (r) => r.Excluded == "false")
-		|> filter(fn: (r) => r.Processed == "true")
-		|> filter(fn: (r) => r._value >= 1000)
+		%[4]s
 		|> count()
-	`, TDB.GetBucket(strconv.Itoa(projectID), timeseries.Metric.AggName), dateRange.StartDate.Format(time.RFC3339), dateRange.EndDate.Format(time.RFC3339), timeseries.Metric.AggName, SessionActiveMetricName)
+	`, TDB.GetBucket(strconv.Itoa(projectID), timeseries.Metric.AggName), dateRange.StartDate.Format(time.RFC3339), dateRange.EndDate.Format(time.RFC3339), SessionActiveQueryFilters)
 	span, _ := tracer.StartSpanFromContext(ctx, "tdb.getWorkspaceMeter")
 	span.SetTag("projectID", projectID)
 	results, err := TDB.Query(ctx, query)

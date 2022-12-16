@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/99designs/gqlgen/graphql"
@@ -3214,40 +3215,48 @@ func (r *queryResolver) Accounts(ctx context.Context) ([]*modelInputs.Account, e
 		return nil, e.Wrap(err, "error querying for workspaces for accounts")
 	}
 
+	wg := sync.WaitGroup{}
 	for _, account := range accounts {
-		dateRange, err := pricing.GetWorkspaceBillingInterval(r.DB, account.ID)
-		if err != nil {
-			return nil, err
-		}
-		var projectIDs []int
-		if err := r.DB.Raw(`SELECT id FROM projects WHERE workspace_id=?`, account.ID).
-			Scan(&projectIDs).Error; err != nil {
-			return nil, e.Wrap(err, "error querying for workspace projects")
-		}
-		for _, projectID := range projectIDs {
-			meter, err := pricing.GetProjectDateRangeMeter(ctx, r.TDB, projectID, dateRange)
+		go func() {
+			defer wg.Done()
+			dateRange, err := pricing.GetWorkspaceBillingInterval(r.DB, account.ID)
 			if err != nil {
 				log.Error(err)
+				return
 			}
-			account.SessionCountCur += int(meter)
-			meter, err = pricing.GetProjectDateRangeMeter(ctx, r.TDB, projectID, &pricing.DateRange{
-				StartDate: dateRange.StartDate.Add(-time.Hour * 24 * 30),
-				EndDate:   dateRange.EndDate.Add(-time.Hour * 24 * 30),
-			})
-			if err != nil {
-				log.Error(err)
+			var projectIDs []int
+			if err := r.DB.Raw(`SELECT id FROM projects WHERE workspace_id=?`, account.ID).
+				Scan(&projectIDs).Error; err != nil {
+				log.Error(e.Wrap(err, "error querying for workspace projects"))
+				return
 			}
-			account.SessionCountPrev += int(meter)
-			meter, err = pricing.GetProjectDateRangeMeter(ctx, r.TDB, projectID, &pricing.DateRange{
-				StartDate: dateRange.StartDate.Add(-time.Hour * 24 * 30 * 2),
-				EndDate:   dateRange.EndDate.Add(-time.Hour * 24 * 30 * 2),
-			})
-			if err != nil {
-				log.Error(err)
+			for _, projectID := range projectIDs {
+				meter, err := pricing.GetProjectDateRangeMeter(ctx, r.TDB, projectID, dateRange)
+				if err != nil {
+					log.Error(err)
+				}
+				account.SessionCountCur += int(meter)
+				meter, err = pricing.GetProjectDateRangeMeter(ctx, r.TDB, projectID, &pricing.DateRange{
+					StartDate: dateRange.StartDate.Add(-time.Hour * 24 * 30),
+					EndDate:   dateRange.EndDate.Add(-time.Hour * 24 * 30),
+				})
+				if err != nil {
+					log.Error(err)
+				}
+				account.SessionCountPrev += int(meter)
+				meter, err = pricing.GetProjectDateRangeMeter(ctx, r.TDB, projectID, &pricing.DateRange{
+					StartDate: dateRange.StartDate.Add(-time.Hour * 24 * 30 * 2),
+					EndDate:   dateRange.EndDate.Add(-time.Hour * 24 * 30 * 2),
+				})
+				if err != nil {
+					log.Error(err)
+				}
+				account.SessionCountPrevPrev += int(meter)
 			}
-			account.SessionCountPrevPrev += int(meter)
-		}
+		}()
+		wg.Add(1)
 	}
+	wg.Wait()
 
 	viewCounts := []*modelInputs.Account{}
 	if err := r.DB.Raw(`
@@ -3365,42 +3374,57 @@ func (r *queryResolver) AccountDetails(ctx context.Context, workspaceID int) (*m
 		return nil, e.Wrap(err, "error getting workspace info")
 	}
 
-	// TODO(vkorolik) replace with influxdb query
-	var queriedMonths = []struct {
-		Sum   int
-		Month string
-	}{}
-	if err := r.DB.Raw(`
-	select SUM(count), to_char(date, 'yyyy-MM') as month
-	from daily_session_counts_view
-	where project_id in (select id from projects where projects.workspace_id = ?)
-	group by month
-	order by month
-	`, workspaceID).Scan(&queriedMonths).Error; err != nil {
-		return nil, e.Errorf("error retrieving months: %v", err)
+	var projectIDs []int
+	if err := r.DB.Raw(`SELECT id FROM projects WHERE workspace_id=? AND free_tier = false`, workspaceID).
+		Scan(&projectIDs).Error; err != nil {
+		return nil, e.Wrap(err, "error querying for workspace projects")
 	}
 
-	var queriedDays = []struct {
-		Sum int
-		Day string
-	}{}
-	if err := r.DB.Raw(`
-	select SUM(count), to_char(date, 'MON-DD-YYYY') as day
-	from daily_session_counts_view
-	where project_id in (select id from projects where projects.workspace_id = ?)
-	group by date
-	order by date
-	`, workspaceID).Scan(&queriedDays).Error; err != nil {
-		return nil, e.Errorf("error retrieving days: %v", err)
+	var queriedMonths = make(map[string]int)
+	var queriedDays = make(map[string]int)
+	for _, projectID := range projectIDs {
+		for _, agg := range []string{"1mo", "1d"} {
+			query := fmt.Sprintf(`
+			  from(bucket: "%[1]s")
+				|> range(start: -1y)
+				%[2]s
+				|> group()
+				|> aggregateWindow(every: %[3]s, fn: count)
+			`, r.TDB.GetBucket(strconv.Itoa(projectID), timeseries.Metric.AggName), pricing.SessionActiveQueryFilters, agg)
+			span, _ := tracer.StartSpanFromContext(ctx, "tdb.getWorkspaceMeter")
+			span.SetTag("projectID", projectID)
+			span.SetTag("agg", agg)
+			results, err := r.TDB.Query(ctx, query)
+			if err != nil {
+				log.Errorf("failed to perform account details tdb query for project: %d", projectID)
+			}
+			for _, r := range results {
+				if r.Value != nil {
+					if agg == "1mo" {
+						t := r.Time.Format("2006-01")
+						if _, ok := queriedMonths[t]; !ok {
+							queriedMonths[t] = 0
+						}
+						queriedMonths[t] += int(r.Value.(int64))
+					} else if agg == "1d" {
+						t := r.Time.Format("01-02-2006")
+						if _, ok := queriedDays[t]; !ok {
+							queriedDays[t] = 0
+						}
+						queriedDays[t] += int(r.Value.(int64))
+					}
+				}
+			}
+		}
 	}
 
-	sessionCountsPerMonth := []*modelInputs.NamedCount{}
-	sessionCountsPerDay := []*modelInputs.NamedCount{}
-	for _, s := range queriedMonths {
-		sessionCountsPerMonth = append(sessionCountsPerMonth, &modelInputs.NamedCount{Name: s.Month, Count: s.Sum})
+	var sessionCountsPerMonth []*modelInputs.NamedCount
+	var sessionCountsPerDay []*modelInputs.NamedCount
+	for month, count := range queriedMonths {
+		sessionCountsPerMonth = append(sessionCountsPerMonth, &modelInputs.NamedCount{Name: month, Count: count})
 	}
-	for _, s := range queriedDays {
-		sessionCountsPerDay = append(sessionCountsPerDay, &modelInputs.NamedCount{Name: s.Day, Count: s.Sum})
+	for day, count := range queriedDays {
+		sessionCountsPerDay = append(sessionCountsPerDay, &modelInputs.NamedCount{Name: day, Count: count})
 	}
 
 	var stripeCustomerId string
