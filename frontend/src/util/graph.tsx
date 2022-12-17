@@ -82,7 +82,6 @@ const { Query } = namedOperations
 const GraphCDNOperations = [
 	Query.GetKeyPerformanceIndicators,
 	Query.GetDailyErrorFrequency,
-	Query.GetDailySessionsCount,
 	Query.GetReferrersCount,
 	Query.GetTopUsers,
 	Query.GetRageClicksForProject,
