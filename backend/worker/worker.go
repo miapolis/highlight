@@ -876,16 +876,16 @@ func (w *Worker) processSession(ctx context.Context, s *model.Session) error {
 		}
 	}
 
-	length := float64(accumulator.ActiveDuration.Milliseconds())
-	if length < 1 {
-		length = float64(sessionTotalLengthInMilliseconds)
+	length := float64(sessionTotalLengthInMilliseconds)
+	if accumulator.ActiveDuration.Milliseconds() != 0 {
+		length = float64(accumulator.ActiveDuration.Milliseconds())
 	}
 	if err := w.PublicResolver.PushMetricsImpl(ctx, s.SecureID, []*publicModel.MetricInput{
 		{
 			SessionSecureID: s.SecureID,
 			Timestamp:       s.CreatedAt,
 			Name:            pricing.SessionActiveMetricName,
-			Value:           float64(accumulator.ActiveDuration.Milliseconds()),
+			Value:           length,
 			Category:        pointy.String(model.InternalMetricCategory),
 			Tags: []*publicModel.MetricTag{
 				{Name: "Excluded", Value: "false"},
