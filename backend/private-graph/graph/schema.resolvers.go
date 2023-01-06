@@ -54,7 +54,7 @@ import (
 	"github.com/rs/zerolog/pkgerrors"
 	"github.com/samber/lo"
 	log "github.com/sirupsen/logrus"
-	stripe "github.com/stripe/stripe-go/v72"
+	"github.com/stripe/stripe-go/v72"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -3237,16 +3237,16 @@ func (r *queryResolver) Accounts(ctx context.Context) ([]*modelInputs.Account, e
 				}
 				account.SessionCountCur += int(meter)
 				meter, err = pricing.GetProjectDateRangeMeter(ctx, r.TDB, projectID, &pricing.DateRange{
-					StartDate: dateRange.StartDate.Add(-time.Hour * 24 * 30),
-					EndDate:   dateRange.EndDate.Add(-time.Hour * 24 * 30),
+					StartDate: dateRange.StartDate.AddDate(0, -1, 0),
+					EndDate:   dateRange.EndDate.AddDate(0, -1, 0),
 				})
 				if err != nil {
 					log.Error(err)
 				}
 				account.SessionCountPrev += int(meter)
 				meter, err = pricing.GetProjectDateRangeMeter(ctx, r.TDB, projectID, &pricing.DateRange{
-					StartDate: dateRange.StartDate.Add(-time.Hour * 24 * 30 * 2),
-					EndDate:   dateRange.EndDate.Add(-time.Hour * 24 * 30 * 2),
+					StartDate: dateRange.StartDate.AddDate(0, -2, 0),
+					EndDate:   dateRange.EndDate.AddDate(0, -2, 0),
 				})
 				if err != nil {
 					log.Error(err)
@@ -3425,6 +3425,17 @@ func (r *queryResolver) AccountDetails(ctx context.Context, workspaceID int) (*m
 	for day, count := range queriedDays {
 		sessionCountsPerDay = append(sessionCountsPerDay, &modelInputs.NamedCount{Name: day, Count: count})
 	}
+
+	sort.Slice(sessionCountsPerMonth, func(i, j int) bool {
+		a, _ := time.Parse("2006-01", sessionCountsPerMonth[i].Name)
+		b, _ := time.Parse("2006-01", sessionCountsPerMonth[j].Name)
+		return a.Before(b)
+	})
+	sort.Slice(sessionCountsPerDay, func(i, j int) bool {
+		a, _ := time.Parse("01-02-2006", sessionCountsPerDay[i].Name)
+		b, _ := time.Parse("01-02-2006", sessionCountsPerDay[j].Name)
+		return a.Before(b)
+	})
 
 	var stripeCustomerId string
 	if workspace.StripeCustomerID != nil {
