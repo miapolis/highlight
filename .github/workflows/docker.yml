@@ -56,7 +56,7 @@ jobs:
               run: docker compose logs
 
             - name: Save videos
-              uses: actions/upload-artifact@v2
+              uses: actions/upload-artifact@v3
               if: failure()
               with:
                   name: cypress-videos
