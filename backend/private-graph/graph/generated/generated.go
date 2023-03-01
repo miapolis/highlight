@@ -508,7 +508,7 @@ type ComplexityRoot struct {
 		Type func(childComplexity int) int
 	}
 
-	LogsPayload struct {
+	LogsConnection struct {
 		Edges    func(childComplexity int) int
 		PageInfo func(childComplexity int) int
 	}
@@ -635,8 +635,10 @@ type ComplexityRoot struct {
 	}
 
 	PageInfo struct {
-		EndCursor   func(childComplexity int) int
-		HasNextPage func(childComplexity int) int
+		EndCursor       func(childComplexity int) int
+		HasNextPage     func(childComplexity int) int
+		HasPreviousPage func(childComplexity int) int
+		StartCursor     func(childComplexity int) int
 	}
 
 	Plan struct {
@@ -725,7 +727,7 @@ type ComplexityRoot struct {
 		JoinableWorkspaces           func(childComplexity int) int
 		LinearTeams                  func(childComplexity int, projectID int) int
 		LiveUsersCount               func(childComplexity int, projectID int) int
-		Logs                         func(childComplexity int, projectID int, params model.LogsParamsInput, after *string) int
+		Logs                         func(childComplexity int, projectID int, cursor *string, params model.LogsParamsInput, after *string, before *string) int
 		LogsKeyValues                func(childComplexity int, projectID int, keyName string) int
 		LogsKeys                     func(childComplexity int, projectID int) int
 		LogsTotalCount               func(childComplexity int, projectID int, params model.LogsParamsInput) int
@@ -1329,7 +1331,7 @@ type QueryResolver interface {
 	SourcemapVersions(ctx context.Context, projectID int) ([]string, error)
 	OauthClientMetadata(ctx context.Context, clientID string) (*model.OAuthClient, error)
 	EmailOptOuts(ctx context.Context, token *string, adminID *int) ([]model.EmailOptOutCategory, error)
-	Logs(ctx context.Context, projectID int, params model.LogsParamsInput, after *string) (*model.LogsPayload, error)
+	Logs(ctx context.Context, projectID int, cursor *string, params model.LogsParamsInput, after *string, before *string) (*model.LogsConnection, error)
 	LogsTotalCount(ctx context.Context, projectID int, params model.LogsParamsInput) (uint64, error)
 	LogsKeys(ctx context.Context, projectID int) ([]*model.LogKey, error)
 	LogsKeyValues(ctx context.Context, projectID int, keyName string) ([]string, error)
@@ -3381,19 +3383,19 @@ func (e *executableSchema) Complexity(typeName, field string, childComplexity in
 
 		return e.complexity.LogKey.Type(childComplexity), true
 
-	case "LogsPayload.edges":
-		if e.complexity.LogsPayload.Edges == nil {
+	case "LogsConnection.edges":
+		if e.complexity.LogsConnection.Edges == nil {
 			break
 		}
 
-		return e.complexity.LogsPayload.Edges(childComplexity), true
+		return e.complexity.LogsConnection.Edges(childComplexity), true
 
-	case "LogsPayload.pageInfo":
-		if e.complexity.LogsPayload.PageInfo == nil {
+	case "LogsConnection.pageInfo":
+		if e.complexity.LogsConnection.PageInfo == nil {
 			break
 		}
 
-		return e.complexity.LogsPayload.PageInfo(childComplexity), true
+		return e.complexity.LogsConnection.PageInfo(childComplexity), true
 
 	case "Metric.name":
 		if e.complexity.Metric.Name == nil {
@@ -4438,6 +4440,20 @@ func (e *executableSchema) Complexity(typeName, field string, childComplexity in
 
 		return e.complexity.PageInfo.HasNextPage(childComplexity), true
 
+	case "PageInfo.hasPreviousPage":
+		if e.complexity.PageInfo.HasPreviousPage == nil {
+			break
+		}
+
+		return e.complexity.PageInfo.HasPreviousPage(childComplexity), true
+
+	case "PageInfo.startCursor":
+		if e.complexity.PageInfo.StartCursor == nil {
+			break
+		}
+
+		return e.complexity.PageInfo.StartCursor(childComplexity), true
+
 	case "Plan.errorsLimit":
 		if e.complexity.Plan.ErrorsLimit == nil {
 			break
@@ -5291,7 +5307,7 @@ func (e *executableSchema) Complexity(typeName, field string, childComplexity in
 			return 0, false
 		}
 
-		return e.complexity.Query.Logs(childComplexity, args["project_id"].(int), args["params"].(model.LogsParamsInput), args["after"].(*string)), true
+		return e.complexity.Query.Logs(childComplexity, args["project_id"].(int), args["cursor"].(*string), args["params"].(model.LogsParamsInput), args["after"].(*string), args["before"].(*string)), true
 
 	case "Query.logs_key_values":
 		if e.complexity.Query.LogsKeyValues == nil {
@@ -8078,10 +8094,12 @@ type LogEdge {
 
 type PageInfo {
 	hasNextPage: Boolean!
+	hasPreviousPage: Boolean!
+	startCursor: String!
 	endCursor: String!
 }
 
-type LogsPayload {
+type LogsConnection {
 	edges: [LogEdge!]!
 	pageInfo: PageInfo!
 }
@@ -8994,7 +9012,13 @@ type Query {
 	sourcemap_versions(project_id: ID!): [String!]!
 	oauth_client_metadata(client_id: String!): OAuthClient
 	email_opt_outs(token: String, admin_id: ID): [EmailOptOutCategory!]!
-	logs(project_id: ID!, params: LogsParamsInput!, after: String): LogsPayload!
+	logs(
+		project_id: ID!
+		cursor: String
+		params: LogsParamsInput!
+		after: String
+		before: String
+	): LogsConnection!
 	logs_total_count(project_id: ID!, params: LogsParamsInput!): UInt64!
 	logs_keys(project_id: ID!): [LogKey!]!
 	logs_key_values(project_id: ID!, key_name: String!): [String!]!
@@ -13249,24 +13273,42 @@ func (ec *executionContext) field_Query_logs_args(ctx context.Context, rawArgs m
 		}
 	}
 	args["project_id"] = arg0
-	var arg1 model.LogsParamsInput
+	var arg1 *string
+	if tmp, ok := rawArgs["cursor"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("cursor"))
+		arg1, err = ec.unmarshalOString2ᚖstring(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["cursor"] = arg1
+	var arg2 model.LogsParamsInput
 	if tmp, ok := rawArgs["params"]; ok {
 		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("params"))
-		arg1, err = ec.unmarshalNLogsParamsInput2githubᚗcomᚋhighlightᚑrunᚋhighlightᚋbackendᚋprivateᚑgraphᚋgraphᚋmodelᚐLogsParamsInput(ctx, tmp)
+		arg2, err = ec.unmarshalNLogsParamsInput2githubᚗcomᚋhighlightᚑrunᚋhighlightᚋbackendᚋprivateᚑgraphᚋgraphᚋmodelᚐLogsParamsInput(ctx, tmp)
 		if err != nil {
 			return nil, err
 		}
 	}
-	args["params"] = arg1
-	var arg2 *string
+	args["params"] = arg2
+	var arg3 *string
 	if tmp, ok := rawArgs["after"]; ok {
 		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("after"))
-		arg2, err = ec.unmarshalOString2ᚖstring(ctx, tmp)
+		arg3, err = ec.unmarshalOString2ᚖstring(ctx, tmp)
 		if err != nil {
 			return nil, err
 		}
 	}
-	args["after"] = arg2
+	args["after"] = arg3
+	var arg4 *string
+	if tmp, ok := rawArgs["before"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("before"))
+		arg4, err = ec.unmarshalOString2ᚖstring(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["before"] = arg4
 	return args, nil
 }
 
@@ -27124,8 +27166,8 @@ func (ec *executionContext) fieldContext_LogKey_type(ctx context.Context, field 
 	return fc, nil
 }
 
-func (ec *executionContext) _LogsPayload_edges(ctx context.Context, field graphql.CollectedField, obj *model.LogsPayload) (ret graphql.Marshaler) {
-	fc, err := ec.fieldContext_LogsPayload_edges(ctx, field)
+func (ec *executionContext) _LogsConnection_edges(ctx context.Context, field graphql.CollectedField, obj *model.LogsConnection) (ret graphql.Marshaler) {
+	fc, err := ec.fieldContext_LogsConnection_edges(ctx, field)
 	if err != nil {
 		return graphql.Null
 	}
@@ -27155,9 +27197,9 @@ func (ec *executionContext) _LogsPayload_edges(ctx context.Context, field graphq
 	return ec.marshalNLogEdge2ᚕᚖgithubᚗcomᚋhighlightᚑrunᚋhighlightᚋbackendᚋprivateᚑgraphᚋgraphᚋmodelᚐLogEdgeᚄ(ctx, field.Selections, res)
 }
 
-func (ec *executionContext) fieldContext_LogsPayload_edges(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_LogsConnection_edges(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
-		Object:     "LogsPayload",
+		Object:     "LogsConnection",
 		Field:      field,
 		IsMethod:   false,
 		IsResolver: false,
@@ -27174,8 +27216,8 @@ func (ec *executionContext) fieldContext_LogsPayload_edges(ctx context.Context, 
 	return fc, nil
 }
 
-func (ec *executionContext) _LogsPayload_pageInfo(ctx context.Context, field graphql.CollectedField, obj *model.LogsPayload) (ret graphql.Marshaler) {
-	fc, err := ec.fieldContext_LogsPayload_pageInfo(ctx, field)
+func (ec *executionContext) _LogsConnection_pageInfo(ctx context.Context, field graphql.CollectedField, obj *model.LogsConnection) (ret graphql.Marshaler) {
+	fc, err := ec.fieldContext_LogsConnection_pageInfo(ctx, field)
 	if err != nil {
 		return graphql.Null
 	}
@@ -27205,9 +27247,9 @@ func (ec *executionContext) _LogsPayload_pageInfo(ctx context.Context, field gra
 	return ec.marshalNPageInfo2ᚖgithubᚗcomᚋhighlightᚑrunᚋhighlightᚋbackendᚋprivateᚑgraphᚋgraphᚋmodelᚐPageInfo(ctx, field.Selections, res)
 }
 
-func (ec *executionContext) fieldContext_LogsPayload_pageInfo(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_LogsConnection_pageInfo(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
-		Object:     "LogsPayload",
+		Object:     "LogsConnection",
 		Field:      field,
 		IsMethod:   false,
 		IsResolver: false,
@@ -27215,6 +27257,10 @@ func (ec *executionContext) fieldContext_LogsPayload_pageInfo(ctx context.Contex
 			switch field.Name {
 			case "hasNextPage":
 				return ec.fieldContext_PageInfo_hasNextPage(ctx, field)
+			case "hasPreviousPage":
+				return ec.fieldContext_PageInfo_hasPreviousPage(ctx, field)
+			case "startCursor":
+				return ec.fieldContext_PageInfo_startCursor(ctx, field)
 			case "endCursor":
 				return ec.fieldContext_PageInfo_endCursor(ctx, field)
 			}
@@ -33235,6 +33281,94 @@ func (ec *executionContext) fieldContext_PageInfo_hasNextPage(ctx context.Contex
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _PageInfo_hasPreviousPage(ctx context.Context, field graphql.CollectedField, obj *model.PageInfo) (ret graphql.Marshaler) {
+	fc, err := ec.fieldContext_PageInfo_hasPreviousPage(ctx, field)
+	if err != nil {
+		return graphql.Null
+	}
+	ctx = graphql.WithFieldContext(ctx, fc)
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.HasPreviousPage, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(bool)
+	fc.Result = res
+	return ec.marshalNBoolean2bool(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) fieldContext_PageInfo_hasPreviousPage(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "PageInfo",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _PageInfo_startCursor(ctx context.Context, field graphql.CollectedField, obj *model.PageInfo) (ret graphql.Marshaler) {
+	fc, err := ec.fieldContext_PageInfo_startCursor(ctx, field)
+	if err != nil {
+		return graphql.Null
+	}
+	ctx = graphql.WithFieldContext(ctx, fc)
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.StartCursor, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(string)
+	fc.Result = res
+	return ec.marshalNString2string(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) fieldContext_PageInfo_startCursor(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "PageInfo",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
 		},
 	}
 	return fc, nil
@@ -41657,7 +41791,7 @@ func (ec *executionContext) _Query_logs(ctx context.Context, field graphql.Colle
 	}()
 	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
 		ctx = rctx // use context from middleware stack in children
-		return ec.resolvers.Query().Logs(rctx, fc.Args["project_id"].(int), fc.Args["params"].(model.LogsParamsInput), fc.Args["after"].(*string))
+		return ec.resolvers.Query().Logs(rctx, fc.Args["project_id"].(int), fc.Args["cursor"].(*string), fc.Args["params"].(model.LogsParamsInput), fc.Args["after"].(*string), fc.Args["before"].(*string))
 	})
 	if err != nil {
 		ec.Error(ctx, err)
@@ -41668,9 +41802,9 @@ func (ec *executionContext) _Query_logs(ctx context.Context, field graphql.Colle
 		}
 		return graphql.Null
 	}
-	res := resTmp.(*model.LogsPayload)
+	res := resTmp.(*model.LogsConnection)
 	fc.Result = res
-	return ec.marshalNLogsPayload2ᚖgithubᚗcomᚋhighlightᚑrunᚋhighlightᚋbackendᚋprivateᚑgraphᚋgraphᚋmodelᚐLogsPayload(ctx, field.Selections, res)
+	return ec.marshalNLogsConnection2ᚖgithubᚗcomᚋhighlightᚑrunᚋhighlightᚋbackendᚋprivateᚑgraphᚋgraphᚋmodelᚐLogsConnection(ctx, field.Selections, res)
 }
 
 func (ec *executionContext) fieldContext_Query_logs(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
@@ -41682,11 +41816,11 @@ func (ec *executionContext) fieldContext_Query_logs(ctx context.Context, field g
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			switch field.Name {
 			case "edges":
-				return ec.fieldContext_LogsPayload_edges(ctx, field)
+				return ec.fieldContext_LogsConnection_edges(ctx, field)
 			case "pageInfo":
-				return ec.fieldContext_LogsPayload_pageInfo(ctx, field)
+				return ec.fieldContext_LogsConnection_pageInfo(ctx, field)
 			}
-			return nil, fmt.Errorf("no field named %q was found under type LogsPayload", field.Name)
+			return nil, fmt.Errorf("no field named %q was found under type LogsConnection", field.Name)
 		},
 	}
 	defer func() {
@@ -57879,26 +58013,26 @@ func (ec *executionContext) _LogKey(ctx context.Context, sel ast.SelectionSet, o
 	return out
 }
 
-var logsPayloadImplementors = []string{"LogsPayload"}
+var logsConnectionImplementors = []string{"LogsConnection"}
 
-func (ec *executionContext) _LogsPayload(ctx context.Context, sel ast.SelectionSet, obj *model.LogsPayload) graphql.Marshaler {
-	fields := graphql.CollectFields(ec.OperationContext, sel, logsPayloadImplementors)
+func (ec *executionContext) _LogsConnection(ctx context.Context, sel ast.SelectionSet, obj *model.LogsConnection) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, logsConnectionImplementors)
 	out := graphql.NewFieldSet(fields)
 	var invalids uint32
 	for i, field := range fields {
 		switch field.Name {
 		case "__typename":
-			out.Values[i] = graphql.MarshalString("LogsPayload")
+			out.Values[i] = graphql.MarshalString("LogsConnection")
 		case "edges":
 
-			out.Values[i] = ec._LogsPayload_edges(ctx, field, obj)
+			out.Values[i] = ec._LogsConnection_edges(ctx, field, obj)
 
 			if out.Values[i] == graphql.Null {
 				invalids++
 			}
 		case "pageInfo":
 
-			out.Values[i] = ec._LogsPayload_pageInfo(ctx, field, obj)
+			out.Values[i] = ec._LogsConnection_pageInfo(ctx, field, obj)
 
 			if out.Values[i] == graphql.Null {
 				invalids++
@@ -58752,6 +58886,20 @@ func (ec *executionContext) _PageInfo(ctx context.Context, sel ast.SelectionSet,
 		case "hasNextPage":
 
 			out.Values[i] = ec._PageInfo_hasNextPage(ctx, field, obj)
+
+			if out.Values[i] == graphql.Null {
+				invalids++
+			}
+		case "hasPreviousPage":
+
+			out.Values[i] = ec._PageInfo_hasPreviousPage(ctx, field, obj)
+
+			if out.Values[i] == graphql.Null {
+				invalids++
+			}
+		case "startCursor":
+
+			out.Values[i] = ec._PageInfo_startCursor(ctx, field, obj)
 
 			if out.Values[i] == graphql.Null {
 				invalids++
@@ -66045,23 +66193,23 @@ func (ec *executionContext) marshalNLogKeyType2githubᚗcomᚋhighlightᚑrunᚋ
 	return v
 }
 
-func (ec *executionContext) unmarshalNLogsParamsInput2githubᚗcomᚋhighlightᚑrunᚋhighlightᚋbackendᚋprivateᚑgraphᚋgraphᚋmodelᚐLogsParamsInput(ctx context.Context, v interface{}) (model.LogsParamsInput, error) {
-	res, err := ec.unmarshalInputLogsParamsInput(ctx, v)
-	return res, graphql.ErrorOnPath(ctx, err)
+func (ec *executionContext) marshalNLogsConnection2githubᚗcomᚋhighlightᚑrunᚋhighlightᚋbackendᚋprivateᚑgraphᚋgraphᚋmodelᚐLogsConnection(ctx context.Context, sel ast.SelectionSet, v model.LogsConnection) graphql.Marshaler {
+	return ec._LogsConnection(ctx, sel, &v)
 }
 
-func (ec *executionContext) marshalNLogsPayload2githubᚗcomᚋhighlightᚑrunᚋhighlightᚋbackendᚋprivateᚑgraphᚋgraphᚋmodelᚐLogsPayload(ctx context.Context, sel ast.SelectionSet, v model.LogsPayload) graphql.Marshaler {
-	return ec._LogsPayload(ctx, sel, &v)
-}
-
-func (ec *executionContext) marshalNLogsPayload2ᚖgithubᚗcomᚋhighlightᚑrunᚋhighlightᚋbackendᚋprivateᚑgraphᚋgraphᚋmodelᚐLogsPayload(ctx context.Context, sel ast.SelectionSet, v *model.LogsPayload) graphql.Marshaler {
+func (ec *executionContext) marshalNLogsConnection2ᚖgithubᚗcomᚋhighlightᚑrunᚋhighlightᚋbackendᚋprivateᚑgraphᚋgraphᚋmodelᚐLogsConnection(ctx context.Context, sel ast.SelectionSet, v *model.LogsConnection) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
 			ec.Errorf(ctx, "the requested element is null which the schema does not allow")
 		}
 		return graphql.Null
 	}
-	return ec._LogsPayload(ctx, sel, v)
+	return ec._LogsConnection(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNLogsParamsInput2githubᚗcomᚋhighlightᚑrunᚋhighlightᚋbackendᚋprivateᚑgraphᚋgraphᚋmodelᚐLogsParamsInput(ctx context.Context, v interface{}) (model.LogsParamsInput, error) {
+	res, err := ec.unmarshalInputLogsParamsInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
 }
 
 func (ec *executionContext) unmarshalNMap2map(ctx context.Context, v interface{}) (map[string]interface{}, error) {

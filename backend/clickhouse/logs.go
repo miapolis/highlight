@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	sq "github.com/Masterminds/squirrel"
 	"github.com/google/uuid"
 	modelInputs "github.com/highlight-run/highlight/backend/private-graph/graph/model"
+	"github.com/huandu/go-sqlbuilder"
 	flat "github.com/nqd/flat"
 	e "github.com/pkg/errors"
 )
@@ -27,6 +27,10 @@ type LogRow struct {
 	LogAttributes      map[string]string
 	ProjectId          uint32
 	SecureSessionId    string
+}
+
+func (logRow LogRow) Cursor() string {
+	return encodeCursor(logRow.Timestamp, logRow.UUID)
 }
 
 func (client *Client) BatchWriteLogRows(ctx context.Context, logRows []*LogRow) error {
@@ -48,23 +52,58 @@ func (client *Client) BatchWriteLogRows(ctx context.Context, logRows []*LogRow) 
 	return batch.Send()
 }
 
-const Limit uint64 = 100
+const Limit int = 100
 
-func (client *Client) ReadLogs(ctx context.Context, projectID int, params modelInputs.LogsParamsInput, after *string) (*modelInputs.LogsPayload, error) {
-	query := makeSelectQuery("Timestamp, UUID, SeverityText, Body, LogAttributes", projectID, params, after)
-	query = query.OrderBy("Timestamp DESC, UUID DESC").Limit(Limit + 1)
+type Pagination struct {
+	After          *string
+	AfterOrEqualTo *string // currently only used internally
+	Before         *string
+	WindowAround   *string
+}
 
-	sql, args, err := query.ToSql()
-	if err != nil {
-		return nil, err
+func (client *Client) ReadLogs(ctx context.Context, projectID int, params modelInputs.LogsParamsInput, pagination Pagination) (*modelInputs.LogsConnection, error) {
+	var err error
+	var sql string
+	var args []interface{}
+	selectStr := "Timestamp, UUID, SeverityText, Body, LogAttributes"
+	orderBy := "Timestamp DESC, UUID DESC"
+
+	if pagination.WindowAround != nil && len(*pagination.WindowAround) > 1 {
+		// Create a "window" around the cursor
+		// https://stackoverflow.com/a/71738696
+
+		sb1, err := makeSelectBuilder(selectStr, projectID, params, Pagination{
+			Before: pagination.WindowAround,
+		})
+		if err != nil {
+			return nil, err
+		}
+		sb1.OrderBy(orderBy).Limit(Limit/2 + 1)
+
+		sb2, err := makeSelectBuilder(selectStr, projectID, params, Pagination{
+			AfterOrEqualTo: pagination.WindowAround,
+		})
+		if err != nil {
+			return nil, err
+		}
+		sb2.OrderBy(orderBy).Limit(Limit/2 + 1 + 1)
+
+		sb := sqlbuilder.NewSelectBuilder()
+		ub := sqlbuilder.UnionAll(sb1, sb2)
+		sb.Select(selectStr).From(sb.BuilderAs(ub, "logs_window"))
+
+		sql, args = sb.Build()
+	} else {
+		var sb *sqlbuilder.SelectBuilder
+		sb, err = makeSelectBuilder(selectStr, projectID, params, pagination)
+		if err != nil {
+			return nil, err
+		}
+		sb.OrderBy(orderBy).Limit(Limit + 1)
+		sql, args = sb.Build()
 	}
 
-	rows, err := client.conn.Query(
-		ctx,
-		sql,
-		args...,
-	)
-
+	rows, err := client.conn.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -95,39 +134,34 @@ func (client *Client) ReadLogs(ctx context.Context, projectID int, params modelI
 	}
 	rows.Close()
 
-	return getLogsPayload(logs, Limit), rows.Err()
+	return getLogsConnection(logs, pagination), rows.Err()
 }
 
 func (client *Client) ReadLogsTotalCount(ctx context.Context, projectID int, params modelInputs.LogsParamsInput) (uint64, error) {
-	query := makeSelectQuery("COUNT(*)", projectID, params, nil)
-	sql, args, err := query.ToSql()
+	sb, err := makeSelectBuilder("COUNT(*)", projectID, params, Pagination{})
 	if err != nil {
 		return 0, err
 	}
 
+	sql, args := sb.Build()
+
 	var count uint64
-	err = client.conn.QueryRow(
-		ctx,
-		sql,
-		args...,
-	).Scan(&count)
+	err = client.conn.QueryRow(ctx, sql, args...).Scan(&count)
 
 	return count, err
 }
 
 func (client *Client) LogsKeys(ctx context.Context, projectID int) ([]*modelInputs.LogKey, error) {
-	query := sq.Select("arrayJoin(LogAttributes.keys) as key, count() as cnt").
+	sb := sqlbuilder.NewSelectBuilder()
+
+	sb.Select("arrayJoin(LogAttributes.keys) as key, count() as cnt").
 		From("logs").
-		Where(sq.Eq{"ProjectId": projectID}).
+		Where(sb.Equal("ProjectId", projectID)).
 		GroupBy("key").
 		OrderBy("cnt DESC").
 		Limit(50)
 
-	sql, args, err := query.ToSql()
-
-	if err != nil {
-		return nil, err
-	}
+	sql, args := sb.Build()
 
 	rows, err := client.conn.Query(ctx, sql, args...)
 
@@ -157,24 +191,18 @@ func (client *Client) LogsKeys(ctx context.Context, projectID int) ([]*modelInpu
 }
 
 func (client *Client) LogsKeyValues(ctx context.Context, projectID int, keyName string) ([]string, error) {
-	query := sq.Select("LogAttributes[?] as value, count() as cnt").
+	sb := sqlbuilder.NewSelectBuilder()
+	sb.Select("LogAttributes [" + sb.Var(keyName) + "] as value, count() as cnt").
 		From("logs").
-		Where(sq.Eq{"ProjectId": projectID}).
-		Where("mapContains(LogAttributes, ?)", keyName).
+		Where(sb.Equal("ProjectId", projectID)).
+		Where("mapContains(LogAttributes, " + sb.Var(keyName) + ")").
 		GroupBy("value").
 		OrderBy("cnt DESC").
 		Limit(50)
 
-	sql, args, err := query.ToSql()
+	sql, args := sb.Build()
 
-	// Injects `keyName` into LogAttributes[?]
-	argsWithKeyName := append([]interface{}{keyName}, args...)
-
-	if err != nil {
-		return nil, err
-	}
-
-	rows, err := client.conn.Query(ctx, sql, argsWithKeyName...)
+	rows, err := client.conn.Query(ctx, sql, args...)
 
 	if err != nil {
 		return nil, err
@@ -234,43 +262,74 @@ func makeSeverityText(severityText string) modelInputs.SeverityText {
 	}
 }
 
-func makeSelectQuery(selectStr string, projectID int, params modelInputs.LogsParamsInput, after *string) sq.SelectBuilder {
-	query := sq.Select(selectStr).
+func makeSelectBuilder(selectStr string, projectID int, params modelInputs.LogsParamsInput, pagination Pagination) (*sqlbuilder.SelectBuilder, error) {
+	sb := sqlbuilder.NewSelectBuilder()
+	sb.Select(selectStr).
 		From("logs").
-		Where(sq.Eq{"ProjectId": projectID})
+		Where(sb.Equal("ProjectId", projectID))
 
-	if after != nil && len(*after) > 1 {
-		timestamp, uuid, err := decodeCursor(*after)
+	if pagination.After != nil && len(*pagination.After) > 1 {
+		timestamp, uuid, err := decodeCursor(*pagination.After)
 		if err != nil {
-			fmt.Print("error decoding cursor")
+			return nil, err
 		}
 
 		// See https://dba.stackexchange.com/a/206811
-		query = query.Where("toUInt64(toDateTime(Timestamp)) <= ?", uint64(timestamp.Unix())).
-			Where("(toUInt64(toDateTime(Timestamp)) < ? OR UUID < ?)", uint64(timestamp.Unix()), uuid)
+		sb.Where(sb.LessEqualThan("toUInt64(toDateTime(Timestamp))", uint64(timestamp.Unix()))).
+			Where(
+				sb.Or(
+					sb.LessThan("toUInt64(toDateTime(Timestamp))", uint64(timestamp.Unix())),
+					sb.LessThan("UUID", uuid),
+				),
+			)
+	} else if pagination.AfterOrEqualTo != nil && len(*pagination.AfterOrEqualTo) > 1 {
+		timestamp, uuid, err := decodeCursor(*pagination.AfterOrEqualTo)
+		if err != nil {
+			return nil, err
+		}
 
+		sb.Where(sb.LessEqualThan("toUInt64(toDateTime(Timestamp))", uint64(timestamp.Unix()))).
+			Where(
+				sb.Or(
+					sb.LessEqualThan("toUInt64(toDateTime(Timestamp))", uint64(timestamp.Unix())),
+					sb.LessEqualThan("UUID", uuid),
+				),
+			)
+	} else if pagination.Before != nil && len(*pagination.Before) > 1 {
+		timestamp, uuid, err := decodeCursor(*pagination.Before)
+		if err != nil {
+			return nil, err
+		}
+
+		sb.Where(sb.GreaterEqualThan("toUInt64(toDateTime(Timestamp))", uint64(timestamp.Unix()))).
+			Where(
+				sb.Or(
+					sb.GreaterThan("toUInt64(toDateTime(Timestamp))", uint64(timestamp.Unix())),
+					sb.GreaterThan("UUID", uuid),
+				),
+			)
 	} else {
-		query = query.Where(sq.LtOrEq{"toUInt64(toDateTime(Timestamp))": uint64(params.DateRange.EndDate.Unix())}).
-			Where(sq.GtOrEq{"toUInt64(toDateTime(Timestamp))": uint64(params.DateRange.StartDate.Unix())})
+		sb.Where(sb.LessEqualThan("toUInt64(toDateTime(Timestamp))", uint64(params.DateRange.EndDate.Unix()))).
+			Where(sb.GreaterEqualThan("toUInt64(toDateTime(Timestamp))", uint64(params.DateRange.StartDate.Unix())))
 	}
 
 	filters := makeFilters(params.Query)
 
 	if len(filters.body) > 0 {
-		query = query.Where(sq.ILike{"Body": filters.body})
+		sb.Where("Body ILIKE" + sb.Var(filters.body))
 	}
 
 	for key, value := range filters.attributes {
 		column := fmt.Sprintf("LogAttributes['%s']", key)
 		if strings.Contains(value, "%") {
-			query = query.Where(sq.Like{column: value})
+			sb.Where(sb.Like(column, value))
 
 		} else {
-			query = query.Where(sq.Eq{column: value})
+			sb.Where(sb.Equal(column, value))
 		}
 	}
 
-	return query
+	return sb, nil
 }
 
 type filters struct {

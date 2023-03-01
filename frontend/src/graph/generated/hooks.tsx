@@ -11331,8 +11331,20 @@ export type GetEmailOptOutsQueryResult = Apollo.QueryResult<
 	Types.GetEmailOptOutsQueryVariables
 >
 export const GetLogsDocument = gql`
-	query GetLogs($project_id: ID!, $params: LogsParamsInput!, $after: String) {
-		logs(project_id: $project_id, params: $params, after: $after) {
+	query GetLogs(
+		$project_id: ID!
+		$cursor: String
+		$params: LogsParamsInput!
+		$after: String
+		$before: String
+	) {
+		logs(
+			project_id: $project_id
+			cursor: $cursor
+			params: $params
+			after: $after
+			before: $before
+		) {
 			edges {
 				cursor
 				node {
@@ -11344,6 +11356,8 @@ export const GetLogsDocument = gql`
 			}
 			pageInfo {
 				hasNextPage
+				hasPreviousPage
+				startCursor
 				endCursor
 			}
 		}
@@ -11363,8 +11377,10 @@ export const GetLogsDocument = gql`
  * const { data, loading, error } = useGetLogsQuery({
  *   variables: {
  *      project_id: // value for 'project_id'
+ *      cursor: // value for 'cursor'
  *      params: // value for 'params'
  *      after: // value for 'after'
+ *      before: // value for 'before'
  *   },
  * });
  */
