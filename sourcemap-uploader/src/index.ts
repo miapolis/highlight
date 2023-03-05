@@ -15,7 +15,7 @@ program
     "Sets the directory of where the sourcemaps are"
   )
   .option(
-    "-bp, --basePath",
+    "-bp, --basePath <string>",
     "An optional base path for the uploaded sourcemaps",
     ""
   )
